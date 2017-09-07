@@ -1,4 +1,5 @@
 CFLAGS = -Wall
+LDIR = lib
 
 all: txlib.so
 
@@ -10,3 +11,6 @@ txlib.o:
 
 clean:
 	rm -f libtx.so txlib.o
+
+lint:
+	./checkpatch.pl -q --no-tree -f lib/*
