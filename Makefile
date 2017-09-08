@@ -1,6 +1,8 @@
 CFLAGS = -Wall
 LDIR = lib
 
+.PHONY: all test clean
+
 all: txlib.so
 
 txlib.so: txlib.o
@@ -9,8 +11,11 @@ txlib.so: txlib.o
 txlib.o:
 	gcc -fPIC -c lib/txlib.c
 
+test:
+	gcc test/simple.c -L. -ltx && ./a.out
+
 clean:
-	rm -f libtx.so txlib.o
+	rm -f libtx.so txlib.o a.out *.log
 
 lint:
 	./checkpatch.pl -q --no-tree -f lib/*
