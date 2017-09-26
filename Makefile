@@ -3,19 +3,16 @@ LDIR = lib
 
 .PHONY: all test clean
 
-all: txlib.so
+all: txnlib.so
 
-txlib.so: txlib.o
-	gcc -shared -o libtx.so txlib.o
-
-txlib.o:
-	gcc -fPIC -c lib/txlib.c
+txnlib.so:
+	gcc -shared -fPIC $(LDIR)/txnlib.c -o libtxn.so
 
 test:
-	gcc test/simple.c -L. -ltx && ./a.out
+	gcc test/simple.c -L. -ltxn -ldl -o simple && LD_PRELOAD=$(shell pwd)/libtxn.so ./simple
 
 clean:
-	rm -f libtx.so txlib.o a.out *.log
+	rm -f libtxn.so simple *.log
 
 lint:
 	./checkpatch.pl -q --no-tree -f lib/*
