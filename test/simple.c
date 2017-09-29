@@ -6,14 +6,14 @@
 // #include <sys/types.h>
 #include <unistd.h>
 
-#include "../lib/txnlib.h"
+#include "txnlib.h"
 
 int main()
 {
 	int txn_id = begin_txn();
 
 	int fd = open("message.txt", O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
-	// write(fd, "hello", 5);
+	write(fd, "hello", 5);
 	// void *buf = malloc(16);
 	// read(fd, buf, 5);
 	// strcat(buf, " goodbye");
