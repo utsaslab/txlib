@@ -12,12 +12,10 @@ int main()
 {
 	int txn_id = begin_txn();
 
-	int fd = open("message.txt", O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
-	write(fd, "hello", 5);
-	// void *buf = malloc(16);
-	// read(fd, buf, 5);
-	// strcat(buf, " goodbye");
-	// write(fd, buf, 16);
+	int fd = open("message.txt", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+	write(fd, "hello ", 6);
+	write(fd, "goodbye\n", 8);
+	write(fd, "abcdefghijklmn\n", 15);
 	close(fd);
 
 	end_txn(txn_id);

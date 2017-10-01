@@ -12,7 +12,7 @@ test:
 	gcc test/simple.c -I$(LDIR) -L. -ltxn -ldl -o simple && LD_PRELOAD=$(shell pwd)/libtxn.so ./simple
 
 clean:
-	rm -f libtxn.so simple *.log
+	rm -rf libtxn.so simple logs
 
 lint:
 	./checkpatch.pl -q --no-tree -f $(LDIR)/*

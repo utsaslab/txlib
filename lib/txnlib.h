@@ -6,6 +6,7 @@
 struct txn { // TODO: linux style says make it const but warning from gcc?
 	int id;
 	int log_fd;
+	int next_buf;
 	struct txn *next;
 };
 
