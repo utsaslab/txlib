@@ -13,12 +13,14 @@ int main()
 	int txn_id = begin_txn();
 
 	int fd = open("message.txt", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
-	write(fd, "hello ", 6);
+	write(fd, "hello transactional world", 25);
 	write(fd, "goodbye\n", 8);
 	write(fd, "abcdefghijklmn\n", 15);
 	close(fd);
 
 	end_txn(txn_id);
+
+	redo("logs", txn_id);
 
 	return 0;
 }
