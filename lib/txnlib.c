@@ -13,10 +13,10 @@ static int (*glibc_close)(int fd);
 static ssize_t (*glibc_read)(int fd, void *buf, size_t count);
 static ssize_t (*glibc_write)(int fd, const void *buf, size_t count);
 
+static const char *log_dir = "logs";
 static int next_id; // TODO: prevent overflow
 static int next_fd = 3; // keep this global to allow cross transactional file access
 static struct txn *cur_txn;
-static const char *log_dir = "logs";
 
 int begin_txn(void)
 {
@@ -26,11 +26,11 @@ int begin_txn(void)
 	glibc_read = dlsym(RTLD_NEXT, "read");
 	glibc_write = dlsym(RTLD_NEXT, "write");
 
-	int err = mkdir(log_dir, 0777);
-	if (err) {
-		printf("making log directory at %s/ failed\n", log_dir);
-		return -1;
-	}
+	// int err = mkdir(log_dir, 0777);
+	// if (err) {
+	// 	printf("making log directory at %s/ failed\n", log_dir);
+	// 	return -1;
+	// }
 
 	// log in current transaction
 	if (cur_txn) {
@@ -112,13 +112,13 @@ int close(int fd)
 	return 0;
 }
 
-// TODO: keep track of position
 ssize_t write(int fd, const void *buf, size_t count)
 {
 	char data_file[64];
 	sprintf(data_file, "logs/txn-data-%d-%d", cur_txn->id, cur_txn->next_buf);
-	int tmp_fd = glibc_open(data_file, O_CREAT | O_EXCL | O_RDWR, 0777); // TODO: later on, let user specify privacy
-	glibc_write(tmp_fd, buf, count);
+	int tmp_fd = glibc_open(data_file, O_CREAT | O_EXCL | O_RDWR | O_APPEND, 0777); // TODO: later on, let user specify privacy
+	const char *word = buf;
+	glibc_write(tmp_fd, word, count);
 	glibc_close(tmp_fd);
 
 	char entry[64];
@@ -138,12 +138,12 @@ int redo(const char *log_dir, int root)
 
 	char line[1024];
 	while (fgets(line, 1024, fptr)) {
-		char *pch = strtok(line, " ");
+		char *pch = strtok(line, " \n");
 		if (strcmp("open", pch) == 0) {
 			int fd_key = atoi(strtok(NULL, " "));
 			const char *path = strtok(NULL, " ");
 			int flags = atoi(strtok(NULL, " "));
-			int real_fd = glibc_open(path, flags);
+			int real_fd = glibc_open(path, flags, S_IRUSR | S_IWUSR);
 			fd_map[fd_key] = real_fd;
 		} else if (strcmp("close", pch) == 0) {
 			int fd_key = atoi(strtok(NULL, " "));
@@ -156,11 +156,11 @@ int redo(const char *log_dir, int root)
 			sprintf(data_path, "%s/txn-data-%d-%d", log_dir, root, data_id);
 			FILE *data = fopen(data_path, "r");
 			unsigned char buf[1024];
-			fread(buf, 25, 1, data);
+			fread(buf, 1024, 1, data);
 			glibc_write(fd_map[fd_key], buf, count);
-		} else if (strcmp("root\n", pch) == 0) {
+		} else if (strcmp("root", pch) == 0) {
 
-		} else if (strcmp("commit\n", pch) == 0) {
+		} else if (strcmp("commit", pch) == 0) {
 
 		} else {
 			printf("(%s) is unsupported.\n", pch);

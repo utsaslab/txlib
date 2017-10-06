@@ -2,20 +2,19 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-// #include <sys/stat.h>
-// #include <sys/types.h>
 #include <unistd.h>
 
 #include "txnlib.h"
 
-int main()
+// test0: simple single-layered transaction with one write then one read
+
+int main(int argc, char **argv)
 {
 	int txn_id = begin_txn();
 
-	int fd = open("message.txt", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
-	write(fd, "hello transactional world", 25);
+	int fd = open("out/test0.out", O_CREAT | O_RDWR, 777);
+	write(fd, "hello transactional world\n", 26);
 	write(fd, "goodbye\n", 8);
-	write(fd, "abcdefghijklmn\n", 15);
 	close(fd);
 
 	end_txn(txn_id);
