@@ -158,9 +158,15 @@ int redo(const char *log_dir, int root)
 			unsigned char buf[1024];
 			fread(buf, 1024, 1, data);
 			glibc_write(fd_map[fd_key], buf, count);
+		} else if (strcmp("begin", pch) == 0) {
+			int txn_id = atoi(strtok(NULL, " "));
+			redo(log_dir, txn_id);
+
 		} else if (strcmp("root", pch) == 0) {
 
 		} else if (strcmp("commit", pch) == 0) {
+
+		} else if (strcmp("end", pch) == 0) {
 
 		} else {
 			printf("(%s) is unsupported.\n", pch);
