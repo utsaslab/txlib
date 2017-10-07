@@ -13,8 +13,8 @@ int main(int argc, char **argv)
 	int txn0 = begin_txn();
         int txn1 = begin_txn();
 
-	int fd = open("out/test1.out", O_CREAT | O_RDWR, 777);
-	write(fd, "qhello nested transactional world\n", 34);
+	int fd = open("out/test1.out", O_CREAT | O_RDWR, 0644);
+	write(fd, "hello nested transactional world\n", 34);
 	write(fd, "goodbye\n", 8);
 	close(fd);
 

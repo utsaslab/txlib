@@ -2,6 +2,7 @@
 
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -95,11 +96,17 @@ int end_txn(int txn_id)
 	return 0;
 }
 
-// need to buffer only if O_CREAT flag is set (TODO: huh?)
 int open(const char *pathname, int flags, ...)
 {
 	char entry[64];
-	sprintf(entry, "open %d %s %d\n", next_fd, pathname, flags);
+	if (flags & (O_CREAT | O_TMPFILE)) {
+		va_list args;
+		va_start(args, flags);
+		int mode = va_arg(args, int);
+		sprintf(entry, "open %d %s %d %d\n", next_fd, pathname, flags, mode);
+	} else {
+		sprintf(entry, "open %d %s %d\n", next_fd, pathname, flags);
+	}
 	glibc_write(cur_txn->log_fd, entry, strlen(entry));
 	return next_fd++;
 }
@@ -114,18 +121,65 @@ int close(int fd)
 
 ssize_t write(int fd, const void *buf, size_t count)
 {
+	// save the buffer
 	char data_file[64];
 	sprintf(data_file, "logs/txn-data-%d-%d", cur_txn->id, cur_txn->next_buf);
-	int tmp_fd = glibc_open(data_file, O_CREAT | O_EXCL | O_RDWR | O_APPEND, 0777); // TODO: later on, let user specify privacy
-	const char *word = buf;
-	glibc_write(tmp_fd, word, count);
+	int tmp_fd = glibc_open(data_file, O_CREAT | O_EXCL | O_RDWR | O_APPEND, 777); // TODO: later on, let user specify privacy
+	glibc_write(tmp_fd, buf, count);
 	glibc_close(tmp_fd);
 
+	// write the entry
 	char entry[64];
 	sprintf(entry, "write %d %d %ld\n", fd, cur_txn->next_buf++, count);
 	glibc_write(cur_txn->log_fd, entry, strlen(entry));
 
 	return 0;
+}
+
+// custom implementation of parsing redo logs
+char *nexttok(char *line)
+{
+	if (line == NULL)
+		return strtok(NULL, " ");
+	else
+		return strtok(line, " \n");
+}
+
+int *fd_map;
+
+int redo_open(void)
+{
+	int virtual_fd = atoi(strtok(NULL, " "));
+	const char *path = nexttok(NULL);
+	int flags = atoi(strtok(NULL, " "));
+	int real_fd;
+	if (flags & (O_CREAT | O_TMPFILE)) {
+		int mode = atoi(strtok(NULL, " "));
+		real_fd = glibc_open(path, flags, mode);
+	} else {
+		real_fd = glibc_open(path, flags);
+	}
+	fd_map[virtual_fd] = real_fd;
+}
+
+int redo_close(void)
+{
+	int virtual_fd = atoi(strtok(NULL, " "));
+	glibc_close(fd_map[virtual_fd]);
+}
+
+ssize_t redo_write(int txn_id)
+{
+	int virtual_fd = atoi(strtok(NULL, " "));
+	int data_id = atoi(strtok(NULL, " "));
+	int count = atoi(strtok(NULL, " "));
+
+	char data_path[1024];
+	sprintf(data_path, "%s/txn-data-%d-%d", log_dir, txn_id, data_id);
+	FILE *data = fopen(data_path, "r");
+	unsigned char buf[1024];
+	fread(buf, 1024, 1, data);
+	return glibc_write(fd_map[virtual_fd], buf, count);
 }
 
 int redo(const char *log_dir, int root)
@@ -134,34 +188,21 @@ int redo(const char *log_dir, int root)
 	sprintf(log_file, "%s/txn-%d.log", log_dir, root);
 	FILE *fptr = fopen(log_file, "r");
 
-	int fd_map[1024];
+	if (fd_map == NULL)
+		fd_map = malloc(1024 * sizeof(int));
 
 	char line[1024];
 	while (fgets(line, 1024, fptr)) {
-		char *pch = strtok(line, " \n");
+		char *pch = nexttok(line);
 		if (strcmp("open", pch) == 0) {
-			int fd_key = atoi(strtok(NULL, " "));
-			const char *path = strtok(NULL, " ");
-			int flags = atoi(strtok(NULL, " "));
-			int real_fd = glibc_open(path, flags, S_IRUSR | S_IWUSR);
-			fd_map[fd_key] = real_fd;
+			redo_open();
 		} else if (strcmp("close", pch) == 0) {
-			int fd_key = atoi(strtok(NULL, " "));
-			glibc_close(fd_map[fd_key]);
+			redo_close();
 		} else if (strcmp("write", pch) == 0) {
-			int fd_key = atoi(strtok(NULL, " "));
-			int data_id = atoi(strtok(NULL, " "));
-			int count = atoi(strtok(NULL, " "));
-			char data_path[1024];
-			sprintf(data_path, "%s/txn-data-%d-%d", log_dir, root, data_id);
-			FILE *data = fopen(data_path, "r");
-			unsigned char buf[1024];
-			fread(buf, 1024, 1, data);
-			glibc_write(fd_map[fd_key], buf, count);
+			redo_write(root);
 		} else if (strcmp("begin", pch) == 0) {
 			int txn_id = atoi(strtok(NULL, " "));
 			redo(log_dir, txn_id);
-
 		} else if (strcmp("root", pch) == 0) {
 
 		} else if (strcmp("commit", pch) == 0) {

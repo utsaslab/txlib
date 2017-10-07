@@ -12,7 +12,7 @@ int main(int argc, char **argv)
 {
 	int txn_id = begin_txn();
 
-	int fd = open("out/test0.out", O_CREAT | O_RDWR, 777);
+	int fd = open("out/test0.out", O_CREAT | O_RDWR, 0644);
 	write(fd, "hello transactional world\n", 26);
 	write(fd, "goodbye\n", 8);
 	close(fd);
