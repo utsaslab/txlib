@@ -27,7 +27,7 @@ int begin_txn(void)
 	glibc_read = dlsym(RTLD_NEXT, "read");
 	glibc_write = dlsym(RTLD_NEXT, "write");
 
-	// int err = mkdir(log_dir, 0777);
+	int err = mkdir(log_dir, 0777);
 	// if (err) {
 	// 	printf("making log directory at %s/ failed\n", log_dir);
 	// 	return -1;
@@ -51,7 +51,7 @@ int begin_txn(void)
 	struct txn *new_txn = malloc(sizeof(struct txn));
 	new_txn->id = next_id;
 	// TODO: make sure you're not overriding other logs and set permissions right
-	new_txn->log_fd = glibc_open(log_file, O_CREAT | O_EXCL | O_RDWR, 0777);
+	new_txn->log_fd = glibc_open(log_file, O_CREAT | O_EXCL | O_RDWR, 0666);
 	new_txn->next = cur_txn;
 	cur_txn = new_txn;
 	next_id++;
@@ -124,7 +124,7 @@ ssize_t write(int fd, const void *buf, size_t count)
 	// save the buffer
 	char data_file[64];
 	sprintf(data_file, "logs/txn-data-%d-%d", cur_txn->id, cur_txn->next_buf);
-	int tmp_fd = glibc_open(data_file, O_CREAT | O_EXCL | O_RDWR | O_APPEND, 777); // TODO: later on, let user specify privacy
+	int tmp_fd = glibc_open(data_file, O_CREAT | O_EXCL | O_RDWR | O_APPEND, 0666); // TODO: later on, let user specify privacy
 	glibc_write(tmp_fd, buf, count);
 	glibc_close(tmp_fd);
 
