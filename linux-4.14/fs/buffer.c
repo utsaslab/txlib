@@ -89,11 +89,22 @@ EXPORT_SYMBOL(unlock_buffer);
 void buffer_check_dirty_writeback(struct page *page,
 				     bool *dirty, bool *writeback)
 {
+	printk("in writeback");
 	struct buffer_head *head, *bh;
 	*dirty = false;
 	*writeback = false;
 
 	BUG_ON(!PageLocked(page));
+
+	if (page) {
+		if (page->hold) {
+			printk("page held");
+		} else {
+			printk("page not held");
+		}
+	} else {
+		printk("null page");
+	}
 
 	if (!page_has_buffers(page))
 		return;

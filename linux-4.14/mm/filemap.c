@@ -2864,8 +2864,19 @@ int pagecache_write_begin(struct file *file, struct address_space *mapping,
 				loff_t pos, unsigned len, unsigned flags,
 				struct page **pagep, void **fsdata)
 {
-	const struct address_space_operations *aops = mapping->a_ops;
+	printk("held in write begin");
+	if (file && file->hold) {
+		printk("holding page bc file is held");
+		if (*pagep)
+			(*pagep)->hold = true;
+		else
+			printk("page is null held");
+	} else {
+		printk("file not held");
+	}
 
+	const struct address_space_operations *aops = mapping->a_ops;
+	
 	return aops->write_begin(file, mapping, pos, len, flags,
 							pagep, fsdata);
 }
