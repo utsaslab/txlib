@@ -2236,12 +2236,14 @@ continue_unlock:
 				unlock_page(page);
 				continue;
 			}
-			printk("considering page");
+
 			if (page->hold) {
 				printk("page held");
+				goto continue_unlock;
 			} else {
 				printk("page not held");	
 			}
+
 			if (!PageDirty(page)) {
 				/* someone wrote it for us */
 				goto continue_unlock;
