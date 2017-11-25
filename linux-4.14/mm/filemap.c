@@ -2864,7 +2864,6 @@ int pagecache_write_begin(struct file *file, struct address_space *mapping,
 				loff_t pos, unsigned len, unsigned flags,
 				struct page **pagep, void **fsdata)
 {
-	printk("held in write begin");
 	if (file && file->hold) {
 		printk("holding page bc file is held");
 		if (*pagep)
