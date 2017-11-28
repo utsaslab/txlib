@@ -941,4 +941,8 @@ asmlinkage long sys_pkey_free(int pkey);
 asmlinkage long sys_statx(int dfd, const char __user *path, unsigned flags,
 			  unsigned mask, struct statx __user *buffer);
 
+asmlinkage long sys_hold(unsigned int fd);
+asmlinkage long sys_release(unsigned int fd);
+asmlinkage long sys_check_hold(unsigned int fd);
+
 #endif

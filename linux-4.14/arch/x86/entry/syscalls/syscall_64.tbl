@@ -340,6 +340,10 @@
 331	common	pkey_free		sys_pkey_free
 332	common	statx			sys_statx
 
+333	common	hold			sys_hold
+334	common	release			sys_release
+335	common	check_hold		sys_check_hold
+
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
 # for native 64-bit operation.

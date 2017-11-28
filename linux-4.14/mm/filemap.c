@@ -2866,8 +2866,10 @@ int pagecache_write_begin(struct file *file, struct address_space *mapping,
 {
 	if (file && file->hold) {
 		printk("holding page bc file is held");
-		if (*pagep)
+		if (*pagep) {
 			(*pagep)->hold = true;
+			printk("set page->hold to true");
+		}
 		else
 			printk("page is null held");
 	} else {
@@ -2885,6 +2887,7 @@ int pagecache_write_end(struct file *file, struct address_space *mapping,
 				loff_t pos, unsigned len, unsigned copied,
 				struct page *page, void *fsdata)
 {
+	printk("pagecache_write_end");
 	const struct address_space_operations *aops = mapping->a_ops;
 
 	return aops->write_end(file, mapping, pos, len, copied, page, fsdata);
