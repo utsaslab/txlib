@@ -2887,7 +2887,6 @@ int pagecache_write_end(struct file *file, struct address_space *mapping,
 				loff_t pos, unsigned len, unsigned copied,
 				struct page *page, void *fsdata)
 {
-	printk("pagecache_write_end");
 	const struct address_space_operations *aops = mapping->a_ops;
 
 	return aops->write_end(file, mapping, pos, len, copied, page, fsdata);
@@ -3043,11 +3042,24 @@ again:
 		if (mapping_writably_mapped(mapping))
 			flush_dcache_page(page);
 
+		if (file->hold) {
+			page->hold = true;
+			printk("file->hold => page->hold");
+		}
+
 		copied = iov_iter_copy_from_user_atomic(page, i, offset, bytes);
 		flush_dcache_page(page);
 
 		status = a_ops->write_end(file, mapping, pos, bytes, copied,
 						page, fsdata);
+
+		if (file->hold) {
+			if (page->hold)
+				printk("page is held after set");
+			else
+				printk("page not held after set");
+		}
+
 		if (unlikely(status < 0))
 			break;
 		copied = status;
