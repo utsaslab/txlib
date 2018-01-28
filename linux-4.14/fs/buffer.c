@@ -89,22 +89,11 @@ EXPORT_SYMBOL(unlock_buffer);
 void buffer_check_dirty_writeback(struct page *page,
 				     bool *dirty, bool *writeback)
 {
-	printk("in writeback");
 	struct buffer_head *head, *bh;
 	*dirty = false;
 	*writeback = false;
 
 	BUG_ON(!PageLocked(page));
-
-	if (page) {
-		if (page->hold) {
-			printk("page held");
-		} else {
-			printk("page not held");
-		}
-	} else {
-		printk("null page");
-	}
 
 	if (!page_has_buffers(page))
 		return;
@@ -636,6 +625,11 @@ EXPORT_SYMBOL(mark_buffer_dirty_inode);
 static void __set_page_dirty(struct page *page, struct address_space *mapping,
 			     int warn)
 {
+	if (page->hold) {
+		printk("__set_page_dirty");
+		printk("page (%d) is held", page->id);
+		return;
+	}
 	unsigned long flags;
 
 	spin_lock_irqsave(&mapping->tree_lock, flags);

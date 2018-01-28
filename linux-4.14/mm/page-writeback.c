@@ -2155,7 +2155,6 @@ int write_cache_pages(struct address_space *mapping,
 		      struct writeback_control *wbc, writepage_t writepage,
 		      void *data)
 {
-	printk("write_cache_pages");
 	int ret = 0;
 	int done = 0;
 	struct pagevec pvec;
@@ -2235,13 +2234,6 @@ retry:
 continue_unlock:
 				unlock_page(page);
 				continue;
-			}
-
-			if (page->hold) {
-				printk("page held; skipping writeback");
-				goto continue_unlock;
-			} else {
-				printk("page not held");	
 			}
 
 			if (!PageDirty(page)) {

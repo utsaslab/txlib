@@ -2864,18 +2864,6 @@ int pagecache_write_begin(struct file *file, struct address_space *mapping,
 				loff_t pos, unsigned len, unsigned flags,
 				struct page **pagep, void **fsdata)
 {
-	if (file && file->hold) {
-		printk("holding page bc file is held");
-		if (*pagep) {
-			(*pagep)->hold = true;
-			printk("set page->hold to true");
-		}
-		else
-			printk("page is null held");
-	} else {
-		printk("file not held");
-	}
-
 	const struct address_space_operations *aops = mapping->a_ops;
 	
 	return aops->write_begin(file, mapping, pos, len, flags,
@@ -2993,6 +2981,7 @@ struct page *grab_cache_page_write_begin(struct address_space *mapping,
 }
 EXPORT_SYMBOL(grab_cache_page_write_begin);
 
+int next_id = 12345;
 ssize_t generic_perform_write(struct file *file,
 				struct iov_iter *i, loff_t pos)
 {
@@ -3044,7 +3033,6 @@ again:
 
 		if (file->hold) {
 			page->hold = true;
-			printk("file->hold => page->hold");
 		}
 
 		copied = iov_iter_copy_from_user_atomic(page, i, offset, bytes);
@@ -3054,10 +3042,8 @@ again:
 						page, fsdata);
 
 		if (file->hold) {
-			if (page->hold)
-				printk("page is held after set");
-			else
-				printk("page not held after set");
+			if (!page->hold)
+				printk("ERROR: page not held after write");
 		}
 
 		if (unlikely(status < 0))

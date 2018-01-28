@@ -914,7 +914,6 @@ static enum page_references page_check_references(struct page *page,
 static void page_check_dirty_writeback(struct page *page,
 				       bool *dirty, bool *writeback)
 {
-	printk("page_check_dirty_writeback");
 	struct address_space *mapping;
 
 	/*
@@ -2844,7 +2843,6 @@ static void snapshot_refaults(struct mem_cgroup *root_memcg, pg_data_t *pgdat)
 static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 					  struct scan_control *sc)
 {
-	printk("pls work do try to free");
 	int initial_priority = sc->priority;
 	pg_data_t *last_pgdat;
 	struct zoneref *z;
