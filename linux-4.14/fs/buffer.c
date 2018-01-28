@@ -627,7 +627,7 @@ static void __set_page_dirty(struct page *page, struct address_space *mapping,
 {
 	if (page->hold) {
 		printk("__set_page_dirty");
-		printk("page (%d) is held", page->id);
+		printk("page is held");
 		return;
 	}
 	unsigned long flags;
