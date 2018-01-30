@@ -38,6 +38,8 @@
 #include <linux/rmap.h>
 #include "internal.h"
 
+#include <linux/hold.h>
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/filemap.h>
 
@@ -2981,7 +2983,6 @@ struct page *grab_cache_page_write_begin(struct address_space *mapping,
 }
 EXPORT_SYMBOL(grab_cache_page_write_begin);
 
-int next_id = 12345;
 ssize_t generic_perform_write(struct file *file,
 				struct iov_iter *i, loff_t pos)
 {
@@ -3032,7 +3033,7 @@ again:
 			flush_dcache_page(page);
 
 		if (file->hold) {
-			page->hold = true;
+			hold_page(page);
 		}
 
 		copied = iov_iter_copy_from_user_atomic(page, i, offset, bytes);
@@ -3042,7 +3043,7 @@ again:
 						page, fsdata);
 
 		if (file->hold) {
-			if (!page->hold)
+			if (!page_is_held(page))
 				printk("ERROR: page not held after write");
 		}
 

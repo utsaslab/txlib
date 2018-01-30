@@ -18,6 +18,38 @@
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
 
+// kernel methods
+
+struct page_node {
+	struct page *page;
+	struct page_node *next;
+};
+struct page_node *held_pages;
+
+void hold_page(struct page *page)
+{
+	if (page_is_held(page))
+		return;
+
+	struct page_node *pn = kmalloc(sizeof(struct page_node), GFP_KERNEL);
+	pn->page = page;
+	pn->next = held_pages;
+	held_pages = pn;
+}
+
+bool page_is_held(struct page *page)
+{
+	struct page_node *temp = held_pages;
+	while (temp) {
+		if (temp->page == page)
+			return true;
+		temp = temp->next;
+	}
+	return false;
+}
+
+// syscalls
+
 // TODO: use SYSCALL_DEFINE<N>()
 
 asmlinkage long sys_hold(unsigned int fd)

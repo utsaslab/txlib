@@ -47,6 +47,8 @@
 #include <linux/pagevec.h>
 #include <trace/events/block.h>
 
+#include <linux/hold.h>
+
 static int fsync_buffers_list(spinlock_t *lock, struct list_head *list);
 static int submit_bh_wbc(int op, int op_flags, struct buffer_head *bh,
 			 enum rw_hint hint, struct writeback_control *wbc);
@@ -625,7 +627,7 @@ EXPORT_SYMBOL(mark_buffer_dirty_inode);
 static void __set_page_dirty(struct page *page, struct address_space *mapping,
 			     int warn)
 {
-	if (page->hold) {
+	if (page_is_held(page)) {
 		printk("__set_page_dirty");
 		printk("page is held");
 		return;
