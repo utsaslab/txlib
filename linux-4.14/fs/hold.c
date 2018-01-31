@@ -20,32 +20,33 @@
 
 // kernel methods
 
-struct page_node {
-	struct page *page;
-	struct page_node *next;
+struct page_inode {
+	pgoff_t index;
+	struct page_inode *next;
 };
-struct page_node *held_pages;
+struct page_inode *held_pages;
+
+bool page_is_held(struct page *page)
+{
+	struct page_inode *temp = held_pages;
+	pgoff_t index = page_index(page);
+	while (temp) {
+		if (temp->index == index)
+			return true;
+		temp = temp->next;
+	}
+	return false;
+}
 
 void hold_page(struct page *page)
 {
 	if (page_is_held(page))
 		return;
 
-	struct page_node *pn = kmalloc(sizeof(struct page_node), GFP_KERNEL);
-	pn->page = page;
-	pn->next = held_pages;
-	held_pages = pn;
-}
-
-bool page_is_held(struct page *page)
-{
-	struct page_node *temp = held_pages;
-	while (temp) {
-		if (temp->page == page)
-			return true;
-		temp = temp->next;
-	}
-	return false;
+	struct page_inode *pi = kmalloc(sizeof(struct page_inode), GFP_KERNEL);
+	pi->index = page_index(page);
+	pi->next = held_pages;
+	held_pages = pi;
 }
 
 // syscalls
@@ -70,6 +71,17 @@ asmlinkage long sys_release(unsigned int fd)
 	if (f.file) {
 		f.file->hold = false;
 	}
+
+	struct page_inode *temp = held_pages;
+	while (temp) {
+		struct page *page;
+		page = radix_tree_lookup(&f.file->f_mapping->page_tree, temp->index);
+		SetPageDirty(page);
+		struct page_inode *to_free = temp;
+		temp = temp->next;
+		kfree(to_free);
+	}
+
 	return 0;
 }
 
