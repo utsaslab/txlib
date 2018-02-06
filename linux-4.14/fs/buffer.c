@@ -627,11 +627,9 @@ EXPORT_SYMBOL(mark_buffer_dirty_inode);
 static void __set_page_dirty(struct page *page, struct address_space *mapping,
 			     int warn)
 {
-	if (page_is_held(page)) {
-		printk("__set_page_dirty");
-		printk("page is held");
+	if (page_is_held(page))
 		return;
-	}
+
 	unsigned long flags;
 
 	spin_lock_irqsave(&mapping->tree_lock, flags);

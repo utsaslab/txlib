@@ -3032,9 +3032,8 @@ again:
 		if (mapping_writably_mapped(mapping))
 			flush_dcache_page(page);
 
-		if (file->hold) {
+		if (file->hold)
 			hold_page(page);
-		}
 
 		copied = iov_iter_copy_from_user_atomic(page, i, offset, bytes);
 		flush_dcache_page(page);

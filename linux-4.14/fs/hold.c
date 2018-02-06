@@ -13,6 +13,7 @@
 #include <linux/compat.h>
 #include <linux/mount.h>
 #include <linux/fs.h>
+#include <linux/writeback.h>
 #include "internal.h"
 
 #include <linux/uaccess.h>
@@ -57,9 +58,9 @@ asmlinkage long sys_hold(unsigned int fd)
 {
 	printk("hold called");
 	struct fd f = fdget(fd);
-	if (f.file) {
+	if (f.file)
 		f.file->hold = true;
-	}
+
 	return 0;
 }
 
@@ -68,15 +69,25 @@ asmlinkage long sys_release(unsigned int fd)
 {
 	printk("release called");
 	struct fd f = fdget(fd);
-	if (f.file) {
+	if (f.file)
 		f.file->hold = false;
-	}
 
 	struct page_inode *temp = held_pages;
 	while (temp) {
 		struct page *page;
 		page = radix_tree_lookup(&f.file->f_mapping->page_tree, temp->index);
-		SetPageDirty(page);
+
+		// __set_page_dirty
+		unsigned long flags;
+		struct address_space *mapping = f.file->f_mapping;
+		spin_lock_irqsave(&mapping->tree_lock, flags);
+		if (page->mapping) {
+			account_page_dirtied(page, mapping);
+			radix_tree_tag_set(&mapping->page_tree,
+				page_index(page), PAGECACHE_TAG_DIRTY);
+		}
+		spin_unlock_irqrestore(&mapping->tree_lock, flags);
+
 		struct page_inode *to_free = temp;
 		temp = temp->next;
 		kfree(to_free);
