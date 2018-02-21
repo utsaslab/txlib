@@ -8,11 +8,11 @@ struct txn { // TODO: linux style says make it const but warning from gcc?
 	struct txn *next;
 };
 
-struct undo_node {
+struct log_node {
 	char name[256];
 	int is_dir;
 	// TODO: local undos field needed
-	struct undo_node *children[256]; // TODO: this is a lil arbitrary
+	struct log_node *children[256]; // TODO: this is a lil arbitrary
 };
 
 int begin_txn(void);

@@ -19,22 +19,22 @@ static ssize_t (*glibc_write)(int fd, const void *buf, size_t count);
 static const char *log_dir = "logs";
 static int next_id; // TODO: prevent overflow
 static struct txn *cur_txn;
-static struct undo_node *log_tree;
+static struct log_node *log_tree;
 
 // helper methods
 
-// return 0 on fail, 1 on success
+// return 0 on success, nonzero otherwise
 int add_to_tree(const char *path)
 {
 	// let root have empty string as name
 	if (!log_tree) {
-		log_tree = malloc(sizeof(struct undo_node));
+		log_tree = malloc(sizeof(struct log_node));
 		log_tree->is_dir = 1;
 	}
 
 	char *ret = realpath(path, NULL);
 	if (ret) {
-		struct undo_node *branch = log_tree;
+		struct log_node *branch = log_tree;
 		int num_children = sizeof(branch->children) / sizeof(branch->children[0]);
 		char *token = strtok(ret, "/");
 		while (token != NULL) {
@@ -55,7 +55,7 @@ int add_to_tree(const char *path)
 
 			if (!found) {
 				// printf("adding %s to %s at %d\n", token, branch->name, first_open);
-				struct undo_node *new_node = malloc(sizeof(struct undo_node));
+				struct log_node *new_node = malloc(sizeof(struct log_node));
 				sprintf(new_node->name, "%s", token);
 				// TODO: check if dir
 				branch->children[first_open] = new_node;
@@ -66,7 +66,7 @@ int add_to_tree(const char *path)
 		}
 	} else {
 		printf("error getting absolute path for %s\n", path);
-		return 0;
+		return -1;
 	}
 
 	return 0;
