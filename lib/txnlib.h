@@ -10,6 +10,7 @@ struct txn { // TODO: linux style says make it const but warning from gcc?
 
 struct undo_node {
 	char name[256];
+	int is_dir;
 	// TODO: local undos field needed
 	struct undo_node *children[256]; // TODO: this is a lil arbitrary
 };
@@ -28,13 +29,6 @@ int close(int fd);
 ssize_t read(int fd, void *buf, size_t count);
 
 ssize_t write(int fd, const void *buf, size_t count);
-
-int fsync(int fd);
-int fdatasync(int fd);
-
-// helper methods
-int add_to_tree(const char *path);
-char *nexttok(char *line);
 
 // for testing
 void crash() { return; }
