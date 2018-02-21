@@ -136,84 +136,11 @@ ssize_t write(int fd, const void *buf, size_t count)
 	return 0;
 }
 
-// custom implementation of parsing redo logs
+// helper methods
 char *nexttok(char *line)
 {
 	if (line == NULL)
 		return strtok(NULL, " ");
 	else
 		return strtok(line, " \n");
-}
-
-int *fd_map;
-
-int redo_open(void)
-{
-	int virtual_fd = atoi(strtok(NULL, " "));
-	const char *path = nexttok(NULL);
-	int flags = atoi(strtok(NULL, " "));
-	int real_fd;
-	if (flags & (O_CREAT | O_TMPFILE)) {
-		int mode = atoi(strtok(NULL, " "));
-		real_fd = glibc_open(path, flags, mode);
-	} else {
-		real_fd = glibc_open(path, flags);
-	}
-	fd_map[virtual_fd] = real_fd;
-}
-
-int redo_close(void)
-{
-	int virtual_fd = atoi(strtok(NULL, " "));
-	glibc_close(fd_map[virtual_fd]);
-}
-
-ssize_t redo_write(int txn_id)
-{
-	int virtual_fd = atoi(strtok(NULL, " "));
-	int data_id = atoi(strtok(NULL, " "));
-	int count = atoi(strtok(NULL, " "));
-
-	char data_path[1024];
-	sprintf(data_path, "%s/txn-data-%d-%d", log_dir, txn_id, data_id);
-	FILE *data = fopen(data_path, "r");
-	unsigned char buf[1024];
-	fread(buf, 1024, 1, data);
-	return glibc_write(fd_map[virtual_fd], buf, count);
-}
-
-int redo(const char *log_dir, int root)
-{
-	char log_file[64];
-	sprintf(log_file, "%s/txn-%d.log", log_dir, root);
-	FILE *fptr = fopen(log_file, "r");
-
-	if (fd_map == NULL)
-		fd_map = malloc(1024 * sizeof(int));
-
-	char line[1024];
-	while (fgets(line, 1024, fptr)) {
-		char *pch = nexttok(line);
-		if (strcmp("open", pch) == 0) {
-			redo_open();
-		} else if (strcmp("close", pch) == 0) {
-			redo_close();
-		} else if (strcmp("write", pch) == 0) {
-			redo_write(root);
-		} else if (strcmp("begin", pch) == 0) {
-			int txn_id = atoi(strtok(NULL, " "));
-			redo(log_dir, txn_id);
-		} else if (strcmp("root", pch) == 0) {
-
-		} else if (strcmp("commit", pch) == 0) {
-
-		} else if (strcmp("end", pch) == 0) {
-
-		} else {
-			printf("(%s) is unsupported.\n", pch);
-		}
-
-	}
-
-	return 0;
 }

@@ -29,6 +29,7 @@ ssize_t write(int fd, const void *buf, size_t count);
 int fsync(int fd);
 int fdatasync(int fd);
 
-int redo(const char *log_dir, int txn_id);
+// for testing
+void crash();
 
 #endif // TXNLIB_H_

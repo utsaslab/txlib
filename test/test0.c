@@ -19,7 +19,5 @@ int main(int argc, char **argv)
 
 	end_txn(txn_id);
 
-	redo("logs", txn_id);
-
 	return 0;
 }
