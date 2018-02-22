@@ -11,7 +11,12 @@ struct txn { // TODO: linux style says make it const but warning from gcc?
 struct log_node {
 	char name[256];
 	int is_dir;
-	// TODO: local undos field needed
+
+	// undo fields
+	int created;
+	struct log_node *removed[256];
+
+	struct log_node *parent;
 	struct log_node *children[256]; // TODO: this is a lil arbitrary
 };
 
@@ -22,6 +27,11 @@ int end_txn(int txn_id);
 int open(const char *pathname, int flags, ... /* mode_t mode */);
 int creat(const char *pathname, mode_t mode);
 int openat(int dirfd, const char *pathname, int flags, ... /* mode_t mode */);
+
+// TODO: wrap unlink(at) and rmdir
+int remove(const char *pathname);
+
+int access(const char *pathname, int mode);
 
 // keep track close so we do not fail to replicate errors from original program
 int close(int fd);
