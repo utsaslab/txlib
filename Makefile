@@ -20,9 +20,10 @@ test:
 		diff $(TESTDIR)/test$$i.ok $(OUTDIR)/test$$i.out > $(OUTDIR)/test$$i.diff && \
 		echo test$$i pass) \
 		|| \
-		(echo test$$i fail; \
-		echo "\n\n:::::::: expected ::::::::"; cat $(TESTDIR)/test$$i.ok; \
-		echo "\n\n:::::::: found ::::::::"; cat $(OUTDIR)/test$$i.out) \
+		(echo =========================================; \
+		echo test$$i fail; \
+		echo "\n-------- expected --------"; cat $(TESTDIR)/test$$i.ok; \
+		echo "\n\n--------- found ---------"; cat $(OUTDIR)/test$$i.out) \
 	done \
 
 clean:
