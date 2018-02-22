@@ -17,7 +17,6 @@ static int (*glibc_close)(int fd);
 static ssize_t (*glibc_read)(int fd, void *buf, size_t count);
 static ssize_t (*glibc_write)(int fd, const void *buf, size_t count);
 static int (*glibc_remove)(const char *pathname);
-static int (*glibc_access)(const char *pathname, int mode);
 
 static const char *log_dir = "logs";
 static int next_id; // TODO: prevent overflow
@@ -42,7 +41,8 @@ char *realpath_missing(const char *path)
 	return rp;
 }
 
-char *get_path_to(const struct log_node *node)
+// need to free returned pointer in calling code
+char *get_path_to(struct log_node *node)
 {
 	char *path = malloc(4096);
 	char copy[4096];
@@ -59,10 +59,8 @@ char *get_path_to(const struct log_node *node)
 // returns child node (created or found)
 struct log_node *find_child(struct log_node *parent, const char *name, int create)
 {
-	if (!parent) {
-		printf("parent is null\n");
+	if (!parent)
 		return NULL;
-	}
 
 	int first_open = -1;
 	int num_children = sizeof(parent->children) / sizeof(parent->children[0]);
@@ -77,6 +75,7 @@ struct log_node *find_child(struct log_node *parent, const char *name, int creat
 		}
 	}
 
+	// only initialize basic fields
 	if (create) {
 		struct log_node *new_node = malloc(sizeof(struct log_node));
 		sprintf(new_node->name, "%s", name);
@@ -115,7 +114,7 @@ struct log_node *add_to_tree(const char *path)
 	return NULL;
 }
 
-// return 1 if path has parent with created == true; 0 otherwise
+// return 1 if any node in path was created in transaction
 int created_in_txn(const char *path)
 {
 	char *rp = realpath(path, NULL);
@@ -139,20 +138,6 @@ int created_in_txn(const char *path)
 	}
 }
 
-// returns error status
-int recover_node(struct log_node *node)
-{
-	if (node->created) {
-
-		char *path = get_path_to(node);
-		printf("removing: %s|\n", path);
-		int ret = glibc_remove(path);
-		free(node);
-		printf("here\n");
-		node = NULL;
-	}
-}
-
 // API
 
 // return 0 for success; nonzero otherwise
@@ -164,9 +149,21 @@ int recover(const char *path)
 		char *token = strtok(rp, "/");
 		while (branch) {
 
+			// RECOVERY LOGIC
 			if (branch->created) {
 				char *path = get_path_to(branch);
 				int ret = glibc_remove(path);
+
+				// find child entry in parent and set to null
+				struct log_node *parent = branch->parent;
+				int num_children = sizeof(parent->children) / sizeof(parent->children[0]);
+				for (int i = 0; i < num_children; i++) {
+					if (strcmp(branch->name, parent->children[i]->name) == 0) {
+						parent->children[i] = NULL;
+						break;
+					}
+				}
+
 				free(branch);
 				break;
 			}
@@ -185,7 +182,6 @@ int begin_txn(void)
 	glibc_read = dlsym(RTLD_NEXT, "read");
 	glibc_write = dlsym(RTLD_NEXT, "write");
 	glibc_remove = dlsym(RTLD_NEXT, "remove");
-	glibc_access = dlsym(RTLD_NEXT, "access");
 
 	int err = mkdir(log_dir, 0777);
 	// if (err) {
@@ -221,18 +217,11 @@ int end_txn(int txn_id)
 
 int open(const char *pathname, int flags, ...)
 {
+	// TODO: different crash detection
 	if (crashed)
 		recover(pathname);
 
 	// TODO: do flags dependent logging
-
-	// test
-	// char *string = malloc(4096);
-	// char copy[4096];
-	// sprintf(string, "%s", "abc");
-	// sprintf(copy, "%s", string);
-	// sprintf(string, "%s %s", "123", copy);
-	// printf("%s", string);
 
 	struct log_node *opened = add_to_tree(pathname);
 	opened->created = flags & O_CREAT;
@@ -267,13 +256,6 @@ ssize_t write(int fd, const void *buf, size_t count)
 {
 	// TODO: do the logic :|
 	return glibc_write(fd, buf, count);
-}
-
-int access(const char *pathname, int mode)
-{
-	printf("in access\n");
-	recover(pathname);
-	return glibc_access(pathname, mode);
 }
 
 // for testing
