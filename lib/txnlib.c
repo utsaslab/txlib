@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include "txnlib.h"
 
+#include <unistd.h>
 #include <errno.h>
 
 static int (*glibc_open)(const char *pathname, int flags, ...);
@@ -23,6 +24,8 @@ static int next_id; // TODO: prevent overflow
 static struct txn *cur_txn;
 static struct log_node *log_tree;
 
+static int crashed = 0;
+
 // helper methods
 
 // need to free returned pointer after done
@@ -35,13 +38,32 @@ char *realpath_missing(const char *path)
 	int size = 4096;
 	char *rp = malloc(size);
 	fgets(rp, size, out);
+	rp[strlen(rp)-1] = 0; // trim the newline off
 	return rp;
+}
+
+char *get_path_to(const struct log_node *node)
+{
+	char *path = malloc(4096);
+	char copy[4096];
+	struct log_node *branch = node;
+	while (branch->parent) {
+		sprintf(copy, "%s", path);
+		sprintf(path, "/%s%s", branch->name, copy);
+		branch = branch->parent;
+	}
+	return path;
 }
 
 // set create to non zero to automatically create if not found
 // returns child node (created or found)
 struct log_node *find_child(struct log_node *parent, const char *name, int create)
 {
+	if (!parent) {
+		printf("parent is null\n");
+		return NULL;
+	}
+
 	int first_open = -1;
 	int num_children = sizeof(parent->children) / sizeof(parent->children[0]);
 	for (int i = 0; i < num_children; i++) {
@@ -117,12 +139,42 @@ int created_in_txn(const char *path)
 	}
 }
 
+// returns error status
+int recover_node(struct log_node *node)
+{
+	if (node->created) {
+
+		char *path = get_path_to(node);
+		printf("removing: %s|\n", path);
+		int ret = glibc_remove(path);
+		free(node);
+		printf("here\n");
+		node = NULL;
+	}
+}
+
 // API
 
 // return 0 for success; nonzero otherwise
 int recover(const char *path)
 {
+	char *rp = realpath_missing(path);
+	if (rp) {
+		struct log_node *branch = log_tree;
+		char *token = strtok(rp, "/");
+		while (branch) {
 
+			if (branch->created) {
+				char *path = get_path_to(branch);
+				int ret = glibc_remove(path);
+				free(branch);
+				break;
+			}
+
+			branch = find_child(branch, token, 0);
+			token = strtok(NULL, "/");
+		}
+	}
 }
 
 int begin_txn(void)
@@ -169,7 +221,18 @@ int end_txn(int txn_id)
 
 int open(const char *pathname, int flags, ...)
 {
+	if (crashed)
+		recover(pathname);
+
 	// TODO: do flags dependent logging
+
+	// test
+	// char *string = malloc(4096);
+	// char copy[4096];
+	// sprintf(string, "%s", "abc");
+	// sprintf(copy, "%s", string);
+	// sprintf(string, "%s %s", "123", copy);
+	// printf("%s", string);
 
 	struct log_node *opened = add_to_tree(pathname);
 	opened->created = flags & O_CREAT;
@@ -203,11 +266,15 @@ int close(int fd)
 ssize_t write(int fd, const void *buf, size_t count)
 {
 	// TODO: do the logic :|
-	return 0;
+	return glibc_write(fd, buf, count);
 }
 
 int access(const char *pathname, int mode)
 {
+	printf("in access\n");
 	recover(pathname);
 	return glibc_access(pathname, mode);
 }
+
+// for testing
+void crash() { crashed = 1; }
