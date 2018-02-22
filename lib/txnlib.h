@@ -14,11 +14,13 @@ struct log_node {
 
 	// undo fields
 	int created;
-	struct log_node *removed[256];
+	int removed;
 
 	struct log_node *parent;
 	struct log_node *children[256]; // TODO: this is a lil arbitrary
 };
+
+int recover(const char *path);
 
 int begin_txn(void);
 int end_txn(int txn_id);

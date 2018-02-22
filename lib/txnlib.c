@@ -38,6 +38,34 @@ char *realpath_missing(const char *path)
 	return rp;
 }
 
+// set create to non zero to automatically create if not found
+// returns child node (created or found)
+struct log_node *find_child(struct log_node *parent, const char *name, int create)
+{
+	int first_open = -1;
+	int num_children = sizeof(parent->children) / sizeof(parent->children[0]);
+	for (int i = 0; i < num_children; i++) {
+		struct log_node *child = parent->children[i];
+		if (child) {
+			if (strcmp(name, child->name) == 0)
+				return child;
+		} else {
+			if (first_open == -1)
+				first_open = i;
+		}
+	}
+
+	if (create) {
+		struct log_node *new_node = malloc(sizeof(struct log_node));
+		sprintf(new_node->name, "%s", name);
+		new_node->parent = parent;
+		parent->children[first_open] = new_node;
+		return new_node;
+	}
+
+	return NULL; // if not found and not created
+}
+
 // returns leaf log_node of path
 struct log_node *add_to_tree(const char *path)
 {
@@ -50,34 +78,11 @@ struct log_node *add_to_tree(const char *path)
 	char *rp = realpath_missing(path);
 	if (rp) {
 		struct log_node *branch = log_tree;
-		int num_children = sizeof(branch->children) / sizeof(branch->children[0]);
 		char *token = strtok(rp, "/");
 		while (token != NULL) {
-			int found = 0;
-			int first_open = -1;
-			for (int i = 0; i < num_children; i++) {
-				if (branch->children[i]) {
-					if (strcmp(token, branch->children[i]->name) == 0) {
-						branch = branch->children[i];
-						found = 1;
-						break;
-					}
-				} else {
-					if (first_open == -1)
-						first_open = i;
-				}
-			}
-
-			if (!found) {
-				// printf("adding %s to %s at %d\n", token, branch->name, first_open);
-				struct log_node *new_node = malloc(sizeof(struct log_node));
-				sprintf(new_node->name, "%s", token);
-				// TODO: check if dir
-				new_node->parent = branch;
-				branch->children[first_open] = new_node;
-				branch = new_node;
-			}
-
+			struct log_node *next = find_child(branch, token, 1);
+			// TODO: fill in relevant log_node fields
+			branch = next;
 			token = strtok(NULL, "/");
 		}
 		return branch;
@@ -94,22 +99,14 @@ int created_in_txn(const char *path)
 	char *rp = realpath(path, NULL);
 	if (rp) {
 		struct log_node *branch = log_tree;
-		int num_children = sizeof(branch->children) / sizeof(branch->children[0]);
 		char *token = strtok(rp, "/");
 		while (token != NULL) {
 			if (branch->created)
 				return 1;
 
-			for (int i = 0; i < num_children; i++) {
-				struct log_node *child = branch->children[i];
-				if (child && strcmp(token, child->name) == 0) {
-					branch = child;
-					break;
-				}
-
-				if (i == num_children - 1) // path not logged
-					return 0;
-			}
+			branch = find_child(branch, token, 0);
+			if (!branch)
+				return 0;
 
 			token = strtok(NULL, "/");
 		}
@@ -123,7 +120,7 @@ int created_in_txn(const char *path)
 // API
 
 // return 0 for success; nonzero otherwise
-int recover(const char *pathname)
+int recover(const char *path)
 {
 
 }
