@@ -18,6 +18,7 @@ static ssize_t (*glibc_read)(int fd, void *buf, size_t count);
 static ssize_t (*glibc_write)(int fd, const void *buf, size_t count);
 static int (*glibc_remove)(const char *pathname);
 
+static int init = 0;
 static const char *log_dir = "logs";
 static int next_id; // TODO: prevent overflow
 static struct txn *cur_txn;
@@ -26,6 +27,24 @@ static struct log_node *log_tree;
 static int crashed = 0;
 
 // helper methods
+
+void initialize()
+{
+	// expose glibc_open (TODO: should I initialize/do this differently?)
+	glibc_open = dlsym(RTLD_NEXT, "open"); // TODO: what is RTLD_NEXT?
+	glibc_close = dlsym(RTLD_NEXT, "close");
+	glibc_read = dlsym(RTLD_NEXT, "read");
+	glibc_write = dlsym(RTLD_NEXT, "write");
+	glibc_remove = dlsym(RTLD_NEXT, "remove");
+
+	int err = mkdir(log_dir, 0777);
+	// if (err) {
+	// 	printf("making log directory at %s/ failed\n", log_dir);
+	// 	return -1;
+	// }
+
+	init = 1;
+}
 
 // need to free returned pointer after done
 char *realpath_missing(const char *path)
@@ -78,6 +97,7 @@ struct log_node *find_child(struct log_node *parent, const char *name, int creat
 	// only initialize basic fields
 	if (create) {
 		struct log_node *new_node = malloc(sizeof(struct log_node));
+		new_node->id = cur_txn->next_node_id++;
 		sprintf(new_node->name, "%s", name);
 		new_node->parent = parent;
 		parent->children[first_open] = new_node;
@@ -112,6 +132,19 @@ struct log_node *add_to_tree(const char *path)
 	}
 
 	return NULL;
+}
+
+void remove_from_tree(struct log_node *node)
+{
+	struct log_node *parent = node->parent;
+	int num_children = sizeof(parent->children) / sizeof(parent->children[0]);
+	for (int i = 0; i < num_children; i++) {
+		if (strcmp(node->name, parent->children[i]->name) == 0) {
+			parent->children[i] = NULL;
+			break;
+		}
+	}
+	free(node);
 }
 
 // return 1 if any node in path was created in transaction
@@ -149,22 +182,18 @@ int recover(const char *path)
 		char *token = strtok(rp, "/");
 		while (branch) {
 
+			char *path = get_path_to(branch);
+
 			// RECOVERY LOGIC
 			if (branch->created) {
-				char *path = get_path_to(branch);
 				int ret = glibc_remove(path);
-
-				// find child entry in parent and set to null
-				struct log_node *parent = branch->parent;
-				int num_children = sizeof(parent->children) / sizeof(parent->children[0]);
-				for (int i = 0; i < num_children; i++) {
-					if (strcmp(branch->name, parent->children[i]->name) == 0) {
-						parent->children[i] = NULL;
-						break;
-					}
-				}
-
-				free(branch);
+				remove_from_tree(branch);
+				break;
+			} else if (branch->removed) {
+				char move_from[4096];
+				sprintf(move_from, "%s/%s", log_dir, branch->backup_loc);
+				rename(move_from, path);
+				remove_from_tree(branch);
 				break;
 			}
 
@@ -176,18 +205,8 @@ int recover(const char *path)
 
 int begin_txn(void)
 {
-	// expose glibc_open (TODO: should I initialize/do this differently?)
-	glibc_open = dlsym(RTLD_NEXT, "open"); // TODO: what is RTLD_NEXT?
-	glibc_close = dlsym(RTLD_NEXT, "close");
-	glibc_read = dlsym(RTLD_NEXT, "read");
-	glibc_write = dlsym(RTLD_NEXT, "write");
-	glibc_remove = dlsym(RTLD_NEXT, "remove");
-
-	int err = mkdir(log_dir, 0777);
-	// if (err) {
-	// 	printf("making log directory at %s/ failed\n", log_dir);
-	// 	return -1;
-	// }
+	if (!init)
+		initialize();
 
 	struct txn *new_txn = malloc(sizeof(struct txn));
 	new_txn->id = next_id++;
@@ -217,14 +236,19 @@ int end_txn(int txn_id)
 
 int open(const char *pathname, int flags, ...)
 {
+	if (!init)
+		initialize();
+
 	// TODO: different crash detection
 	if (crashed)
 		recover(pathname);
 
 	// TODO: do flags dependent logging
 
-	struct log_node *opened = add_to_tree(pathname);
-	opened->created = flags & O_CREAT;
+	if (cur_txn) {
+		struct log_node *opened = add_to_tree(pathname);
+		opened->created = flags & O_CREAT;
+	}
 
 	int ret;
 	if (flags & (O_CREAT | O_TMPFILE)) {
@@ -243,7 +267,14 @@ int open(const char *pathname, int flags, ...)
 
 int remove(const char *pathname)
 {
-	return glibc_remove(pathname);
+	struct log_node *removed = add_to_tree(pathname);
+	removed->removed = 1;
+
+	char move_to[4096];
+	sprintf(removed->backup_loc, "%d_%d", cur_txn->id, removed->id);
+	sprintf(move_to, "%s/%s", log_dir, removed->backup_loc);
+
+	return rename(pathname, move_to); // TODO: does this return the same as remove()?
 }
 
 int close(int fd)
@@ -259,4 +290,5 @@ ssize_t write(int fd, const void *buf, size_t count)
 }
 
 // for testing
+// TODO: also clear transactions
 void crash() { crashed = 1; }

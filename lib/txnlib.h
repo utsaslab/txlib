@@ -5,16 +5,19 @@
 
 struct txn { // TODO: linux style says make it const but warning from gcc?
 	int id;
+	int next_node_id;
 	struct txn *next;
 };
 
 struct log_node {
+	int id;
 	char name[256];
 	int is_dir;
 
 	// undo fields
 	int created;
 	int removed;
+	char backup_loc[4096];
 
 	struct log_node *parent;
 	struct log_node *children[256]; // TODO: this is a lil arbitrary
