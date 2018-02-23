@@ -17,6 +17,7 @@ static int (*glibc_close)(int fd);
 static ssize_t (*glibc_read)(int fd, void *buf, size_t count);
 static ssize_t (*glibc_write)(int fd, const void *buf, size_t count);
 static int (*glibc_remove)(const char *pathname);
+static int (*glibc_mkdir)(const char *pathname, mode_t mode);
 
 static int init = 0;
 static const char *log_dir = "logs";
@@ -36,8 +37,9 @@ void initialize()
 	glibc_read = dlsym(RTLD_NEXT, "read");
 	glibc_write = dlsym(RTLD_NEXT, "write");
 	glibc_remove = dlsym(RTLD_NEXT, "remove");
+	glibc_mkdir = dlsym(RTLD_NEXT, "mkdir");
 
-	int err = mkdir(log_dir, 0777);
+	int err = glibc_mkdir(log_dir, 0777);
 	// if (err) {
 	// 	printf("making log directory at %s/ failed\n", log_dir);
 	// 	return -1;
@@ -119,9 +121,14 @@ struct log_node *add_to_tree(const char *path)
 	char *rp = realpath_missing(path);
 	if (rp) {
 		struct log_node *branch = log_tree;
+		if (branch->created) // optimization; no need to log created children
+			return NULL;
 		char *token = strtok(rp, "/");
 		while (token != NULL) {
 			struct log_node *next = find_child(branch, token, 1);
+			if (next->created) // optmization
+				return NULL;
+
 			// TODO: fill in relevant log_node fields
 			branch = next;
 			token = strtok(NULL, "/");
@@ -134,6 +141,7 @@ struct log_node *add_to_tree(const char *path)
 	return NULL;
 }
 
+// frees node from tree and handles parent's pointer
 void remove_from_tree(struct log_node *node)
 {
 	struct log_node *parent = node->parent;
@@ -247,7 +255,8 @@ int open(const char *pathname, int flags, ...)
 
 	if (cur_txn) {
 		struct log_node *opened = add_to_tree(pathname);
-		opened->created = flags & O_CREAT;
+		if (opened)
+			opened->created = flags & O_CREAT;
 	}
 
 	int ret;
@@ -265,9 +274,25 @@ int open(const char *pathname, int flags, ...)
 	return ret;
 }
 
+int mkdir(const char *pathname, mode_t mode)
+{
+	if (!init)
+		initialize();
+
+	if (cur_txn) {
+		struct log_node *dir = add_to_tree(pathname);
+		dir->created = 1;
+	}
+
+	return glibc_mkdir(pathname, mode);
+}
+
 int remove(const char *pathname)
 {
 	struct log_node *removed = add_to_tree(pathname);
+	if (!removed)
+		return glibc_remove(pathname);
+
 	removed->removed = 1;
 
 	char move_to[4096];

@@ -3,7 +3,7 @@
 
 #include <sys/types.h>
 
-struct txn { // TODO: linux style says make it const but warning from gcc?
+struct txn {
 	int id;
 	int next_node_id;
 	struct txn *next;
@@ -32,6 +32,8 @@ int end_txn(int txn_id);
 int open(const char *pathname, int flags, ... /* mode_t mode */);
 int creat(const char *pathname, mode_t mode);
 int openat(int dirfd, const char *pathname, int flags, ... /* mode_t mode */);
+
+int mkdir(const char *pathname, mode_t mode);
 
 // TODO: wrap unlink(at) and rmdir
 int remove(const char *pathname);
