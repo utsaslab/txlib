@@ -285,7 +285,8 @@ int mkdir(const char *pathname, mode_t mode)
 
 	if (cur_txn) {
 		struct log_node *dir = add_to_tree(pathname);
-		dir->created = 1;
+		if (dir)
+			dir->created = 1;
 	}
 
 	return glibc_mkdir(pathname, mode);
@@ -300,7 +301,7 @@ int remove(const char *pathname)
 	removed->removed = 1;
 
 	char move_to[4096];
-	sprintf(removed->backup_loc, "%d_%d", cur_txn->id, removed->id);
+	sprintf(removed->backup_loc, "%d-%d-%s", cur_txn->id, removed->id, removed->name);
 	sprintf(move_to, "%s/%s", log_dir, removed->backup_loc);
 
 	return rename(pathname, move_to); // TODO: does this return the same as remove()?
