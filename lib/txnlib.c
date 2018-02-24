@@ -194,15 +194,19 @@ int recover(const char *path)
 
 			// RECOVERY LOGIC
 			if (branch->created) {
-				int ret = glibc_remove(path);
+				// int ret = glibc_remove(path);
+				char command[1024];
+				sprintf(command, "rm -r %s", path);
+				system(command); // TODO: is this okay?
 				remove_from_tree(branch);
 				break;
 			} else if (branch->removed) {
 				char move_from[4096];
 				sprintf(move_from, "%s/%s", log_dir, branch->backup_loc);
 				rename(move_from, path);
-				remove_from_tree(branch);
-				break;
+				branch->removed = 0;
+				// remove_from_tree(branch); // TODO: free later?
+				// break;
 			}
 
 			branch = find_child(branch, token, 0);
@@ -317,3 +321,11 @@ ssize_t write(int fd, const void *buf, size_t count)
 // for testing
 // TODO: also clear transactions
 void crash() { crashed = 1; }
+
+void reset()
+{
+	crashed = 0;
+	// mem leak but okay for testing
+	cur_txn = NULL;
+	log_tree = NULL;
+}

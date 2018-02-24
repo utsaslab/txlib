@@ -9,7 +9,7 @@
 
 #include "txnlib.h"
 
-// test4: create + remove equally then crash
+// test4: create then remove equally
 
 int main(int argc, char **argv)
 {
@@ -51,29 +51,10 @@ int main(int argc, char **argv)
     DIR* dir = opendir("out/test4-dir/one/two/six/seven/a");
     int out = open("out/test4.out", O_CREAT | O_RDWR, 0644);
     if (!dir)
-        write(out, "restored properly\n", 18);
+        write(out, "restored successfully\n", 22);
     else
         write(out, "restore failed\n", 15);
     close(out);
-
-	// int fd = open("out/test4.out", O_CREAT | O_RDWR, 0644);
-	// close(fd);
-    //
-    // int txn0 = begin_txn();
-    //
-    // remove("out/test3.out");
-    //
-	// crash();
-    //
-	// int fd1 = open("out/test3.out", O_RDWR, 0644);
-    // if (fd1 != -1) {
-    //     write(fd1, "restored successfully\n", 22);
-    //     close(fd1);
-    // } else {
-    //     int fd2 = open("out/test3.out", O_CREAT | O_RDWR, 0644);
-    //     write(fd2, "restore failed\n", 15);
-    //     close(fd2);
-    // }
 
 	return 0;
 }

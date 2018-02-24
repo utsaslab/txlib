@@ -49,5 +49,6 @@ ssize_t write(int fd, const void *buf, size_t count);
 
 // for testing
 void crash();
+void reset();
 
 #endif // TXNLIB_H_
