@@ -76,6 +76,16 @@ char *get_path_to(struct log_node *node)
 	return path;
 }
 
+char *get_path_from_fd(int fd)
+{
+	// TODO: check -1 -> error?
+	char *path = malloc(4096);
+	char link[4096];
+	sprintf(link, "/proc/self/fd/%d", fd);
+	readlink(link, path, 4096);
+	return path;
+}
+
 // set create to non zero to automatically create if not found
 // returns child node (created or found)
 struct log_node *find_child(struct log_node *parent, const char *name, int create)
@@ -87,6 +97,7 @@ struct log_node *find_child(struct log_node *parent, const char *name, int creat
 	int num_children = sizeof(parent->children) / sizeof(parent->children[0]);
 	for (int i = 0; i < num_children; i++) {
 		struct log_node *child = parent->children[i];
+		if (child) printf("cn: %s\n", child->name);
 		if (child) {
 			if (strcmp(name, child->name) == 0)
 				return child;
@@ -98,6 +109,7 @@ struct log_node *find_child(struct log_node *parent, const char *name, int creat
 
 	// only initialize basic fields
 	if (create) {
+		printf("creating: %s\n", name);
 		struct log_node *new_node = malloc(sizeof(struct log_node));
 		new_node->id = cur_txn->next_node_id++;
 		sprintf(new_node->name, "%s", name);
@@ -125,7 +137,10 @@ struct log_node *add_to_tree(const char *path)
 			return NULL;
 		char *token = strtok(rp, "/");
 		while (token != NULL) {
+			printf("===========================\n");
+			printf("branch: %s\n", branch->name);
 			struct log_node *next = find_child(branch, token, 1);
+			// printf("next: %s\n", next->name);
 			if (next->created) // optmization
 				return NULL;
 
@@ -259,9 +274,30 @@ int open(const char *pathname, int flags, ...)
 
 	if (cur_txn) {
 		struct log_node *opened = add_to_tree(pathname);
-		if (opened)
+		if (opened) {
 			opened->created = flags & O_CREAT;
+		}
 	}
+
+	// shit
+	struct log_node *node = log_tree;
+	printf("at: %s\n", node->name);
+	node = node->children[0];
+	printf("at: %s\n", node->name);
+	node = node->children[0];
+	printf("at: %s\n", node->name);
+	node = node->children[0];
+	printf("at: %s\n", node->name);
+	node = node->children[0];
+	printf("at: %s\n", node->name);
+	node = node->children[0];
+	printf("at: %s\n", node->name);
+	node = node->children[0];
+	printf("at: %s\n", node->name);
+	// if (node->created)
+	// 	printf("fuqq\n");
+	// else
+	// 	printf("fugg\n");
 
 	int ret;
 	if (flags & (O_CREAT | O_TMPFILE)) {
@@ -307,16 +343,58 @@ int remove(const char *pathname)
 	return rename(pathname, move_to); // TODO: does this return the same as remove()?
 }
 
+ssize_t write(int fd, const void *buf, size_t count)
+{
+	if (!init)
+		initialize();
+
+	char *path = get_path_from_fd(fd);
+
+	if (crashed)
+		recover(path);
+
+	if (cur_txn) {
+		// need method for getting from tree
+		printf("adding\n");
+		struct log_node *node = add_to_tree(path);
+		printf("done adding\n");
+		if (!node) {
+			// printf("HERE BISH\n");
+			return glibc_write(fd, buf, count);
+		}
+
+		printf("%s\n", node->name);
+		if (node->created) {
+			printf("wtffffff\n");
+		}
+
+		// TODO: how to figure out how much will be written before write
+		off_t pos = lseek(fd, 0, SEEK_CUR);
+		ssize_t written = glibc_write(fd, buf, count);
+		struct write_log *wl = malloc(sizeof(struct write_log));
+		wl->index = pos;
+		wl->length = written;
+
+		struct write_log *head = node->writes;
+		while (head) {
+			if (head->index > wl->index)
+				head->index += wl->length;
+
+			if (head->next)
+				head = head->next;
+			else
+				head->next = wl;
+		}
+		return written;
+	} else {
+		return glibc_write(fd, buf, count);
+	}
+}
+
 int close(int fd)
 {
 	// TODO: log?
 	return glibc_close(fd);
-}
-
-ssize_t write(int fd, const void *buf, size_t count)
-{
-	// TODO: do the logic :|
-	return glibc_write(fd, buf, count);
 }
 
 // for testing
