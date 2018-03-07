@@ -49,6 +49,7 @@ txnlib currently wraps:
   * `creat` + `openat`
   * `read`
   * `close`
+  * `rename` + `renameat` + `renameat2`
   * `access` + `faccessat`
   * `truncate` + `ftruncate`
   * `ftell` + `fseek` + `lseek`

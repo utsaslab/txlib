@@ -15,6 +15,17 @@ struct file_node {
 	struct file_node *next;
 };
 
+struct log_node {
+	char name[256];
+
+	// undo fields
+	int created;
+	int removed;
+	char backup_loc[4096];
+
+	struct log_node *children[256]; // TODO: a lil arbitrary
+};
+
 // txnlib API
 int begin_txn(void);
 int end_txn(int txn_id);

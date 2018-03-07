@@ -25,65 +25,11 @@ static const char *log_dir = "logs";
 static const char *undo_log = "logs/undo_log";
 static struct txn *cur_txn;
 static struct file_node *logged;
+static struct log_node *tree_log;
 
-void initialize()
-{
-	// expose glibc_open (TODO: should I initialize/do this differently?)
-	glibc_open = dlsym(RTLD_NEXT, "open"); // TODO: what is RTLD_NEXT?
-	glibc_mkdir = dlsym(RTLD_NEXT, "mkdir");
-	glibc_remove = dlsym(RTLD_NEXT, "remove");
-	glibc_read = dlsym(RTLD_NEXT, "read");
-	glibc_write = dlsym(RTLD_NEXT, "write");
-
-	init = 1;
-}
-
-int begin_txn(void)
-{
-	if (!init)
-		initialize();
-
-	if (!cur_txn) { // beginning transaction
-		int err = glibc_mkdir(log_dir, 0777);
-		if (err) {
-			printf("making log directory at %s/ failed\n", log_dir);
-			printf("err: %s\n", strerror(errno));
-			return -1;
-		} else {
-			int fd = glibc_open(undo_log, O_CREAT, 0644);
-			close(fd);
-		}
-	}
-
-	struct txn *new_txn = malloc(sizeof(struct txn));
-	new_txn->id = next_id++;
-	new_txn->next = cur_txn;
-	cur_txn = new_txn;
-
-	return cur_txn->id;
-}
-
-int end_txn(int txn_id)
-{
-	if (txn_id != cur_txn->id) {
-		printf("attempting to end (%d) but current transaction is (%d)", txn_id, cur_txn->id);
-		return -1;
-	}
-
-	void *ended = cur_txn;
-	cur_txn = cur_txn->next;
-	free(ended);
-
-	if (!cur_txn) {
-		// commit everything and then delete log
-		sync(); // TODO: just flush touched files?
-		remove(undo_log); // TODO: check errors?
-	}
-
-	return 0;
-}
-
-// helper methods
+/**
+ * helper methods
+ */
 
 void write_to_log(const char *entry)
 {
@@ -143,7 +89,164 @@ int already_logged(const char *name)
 	return 0;
 }
 
-// for testing
+void initialize()
+{
+	// expose glibc_open (TODO: should I initialize/do this differently?)
+	glibc_open = dlsym(RTLD_NEXT, "open"); // TODO: what is RTLD_NEXT?
+	glibc_mkdir = dlsym(RTLD_NEXT, "mkdir");
+	glibc_remove = dlsym(RTLD_NEXT, "remove");
+	glibc_read = dlsym(RTLD_NEXT, "read");
+	glibc_write = dlsym(RTLD_NEXT, "write");
+
+	init = 1;
+}
+
+// custom implementation of parsing undo logs
+char *nexttok(char *line)
+{
+	if (line == NULL)
+		return strtok(NULL, " ");
+	else
+		return strtok(line, " \n");
+}
+
+/**
+ * tree methods
+ */
+
+// returns child node (created or found)
+struct log_node *find_child(struct log_node *parent, const char *name, int create)
+{
+	int open_slot = -1;
+	int num_children = sizeof(parent->children) / sizeof(parent->children[0]);
+	for (int i = 0; i < num_children; i++) {
+		struct log_node *child = parent->children[i];
+		if (child) {
+			if (strcmp(name, child->name) == 0)
+				return child;
+		} else {
+			if (open_slot == -1)
+				open_slot = i;
+		}
+	}
+
+	if (create) {
+		struct log_node *new_node = malloc(sizeof(struct log_node));
+		sprintf(new_node->name, "%s", name);
+		parent->children[open_slot] = new_node;
+		return new_node;
+	}
+
+	return NULL; // not found and not created
+}
+
+struct log_node *add_to_tree(const char *path)
+{
+	// let root have empty string as name
+	if (!tree_log)
+		tree_log = malloc(sizeof(struct log_node));
+
+	char *rp = realpath_missing(path);
+	struct log_node *branch = tree_log;
+	char *sub = strtok(rp, "/");
+	while (sub != NULL) {
+		branch = find_child(branch, sub, 1);
+		if (!branch || branch->created) { // optimization, no need to log children of created
+			free(rp);
+			return NULL;
+		}
+		sub = strtok(NULL, "/");
+	}
+	free(rp);
+	return branch;
+}
+
+// return 0 on success; nonzero otherwise
+int recover_tree()
+{
+	// in order, undo creates, removes, writes, then metadata
+}
+
+/**
+ * API
+ */
+
+int begin_txn(void)
+{
+	if (!init)
+		initialize();
+
+	recover();
+
+	if (!cur_txn) { // beginning transaction
+		int err = glibc_mkdir(log_dir, 0777);
+		if (err) {
+			printf("making log directory at %s/ failed\n", log_dir);
+			printf("err: %s\n", strerror(errno));
+			return -1;
+		} else {
+			int fd = glibc_open(undo_log, O_CREAT, 0644);
+			close(fd);
+		}
+	}
+
+	struct txn *new_txn = malloc(sizeof(struct txn));
+	new_txn->id = next_id++;
+	new_txn->next = cur_txn;
+	cur_txn = new_txn;
+
+	return cur_txn->id;
+}
+
+int end_txn(int txn_id)
+{
+	if (txn_id != cur_txn->id) {
+		printf("attempting to end (%d) but current transaction is (%d)", txn_id, cur_txn->id);
+		return -1;
+	}
+
+	void *ended = cur_txn;
+	cur_txn = cur_txn->next;
+	free(ended);
+
+	if (!cur_txn) {
+		// commit everything and then delete log
+		sync(); // TODO: just flush touched files?
+		// remove(undo_log); // TODO: check errors?
+	}
+
+	return 0;
+}
+
+int recover()
+{
+	if (cur_txn)
+		return 0;
+
+	// check for existence of undo_log
+	if (access(undo_log, F_OK) == -1)
+		return 0;
+
+	// build tree first
+	FILE *fptr = fopen(undo_log, "r");
+	char entry[4096];
+	while (fgets(entry, 4096, fptr)) {
+		char *op = nexttok(entry);
+		if (strcmp("create", op) == 0) {
+			char *path = nexttok(entry);
+			struct log_node *branch = add_to_tree(path);
+			branch->created = 1;
+		} else if (strcmp("remove", op) == 0) {
+			char *path = nexttok(entry);
+			struct log_node *branch = add_to_tree(path);
+			branch->removed = 1;
+		}
+	}
+}
+
+/**
+ * testing
+ */
 
 void crash() { crashed = 1; }
 
@@ -153,10 +256,14 @@ void reset()
 	cur_txn = NULL; // mem leak but okay for testing
 }
 
-// glibc wrappers
+/**
+ * glibc wrappers
+ */
 
 int open(const char *pathname, int flags, ...)
 {
+	recover();
+
 	// TODO: save metadata if not yet seen
 	if (!already_logged(pathname)) {
 		add_to_logged(pathname);
@@ -182,6 +289,8 @@ int open(const char *pathname, int flags, ...)
 
 ssize_t write(int fd, const void *buf, size_t count)
 {
+	recover();
+
 	off_t pos = lseek(fd, 0, SEEK_CUR);
 	char *path = get_path_from_fd(fd);
 	char entry[4096];
