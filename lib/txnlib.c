@@ -19,7 +19,6 @@ static ssize_t (*glibc_read)(int fd, void *buf, size_t count);
 static ssize_t (*glibc_write)(int fd, const void *buf, size_t count);
 
 static int init = 0;
-static int crashed = 0;
 static int next_id; // TODO: prevent overflow
 static const char *log_dir = "logs";
 static const char *undo_log = "logs/undo_log";
@@ -179,15 +178,9 @@ int begin_txn(void)
 	recover();
 
 	if (!cur_txn) { // beginning transaction
-		int err = glibc_mkdir(log_dir, 0777);
-		if (err) {
-			printf("making log directory at %s/ failed\n", log_dir);
-			printf("err: %s\n", strerror(errno));
-			return -1;
-		} else {
-			int fd = glibc_open(undo_log, O_CREAT, 0644);
-			close(fd);
-		}
+		glibc_mkdir(log_dir, 0777);
+		int fd = glibc_open(undo_log, O_CREAT, 0644);
+		close(fd);
 	}
 
 	struct txn *new_txn = malloc(sizeof(struct txn));
@@ -248,12 +241,11 @@ int recover()
  * testing
  */
 
-void crash() { crashed = 1; }
-
-void reset()
+void crash()
 {
-	crashed = 0;
-	cur_txn = NULL; // mem leak but okay for testing
+	cur_txn = NULL;
+	logged = NULL;
+	tree_log = NULL;
 }
 
 /**

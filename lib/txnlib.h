@@ -33,7 +33,6 @@ int recover();
 
 // for testing
 void crash();
-void reset();
 
 /**
  * glibc filesystem calls (keep same method signature)
