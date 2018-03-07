@@ -1,7 +1,7 @@
 CFLAGS = -Wall
 LIBDIR = lib
 OUTDIR = out
-TESTDIR = test
+TESTDIR = tests
 
 .PHONY: all test clean
 .SILENT:
