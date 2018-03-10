@@ -20,6 +20,7 @@ static ssize_t (*glibc_write)(int fd, const void *buf, size_t count);
 
 static int init = 0;
 static int next_id; // TODO: prevent overflow
+static int backup_id;
 static const char *log_dir = "logs";
 static const char *undo_log = "logs/undo_log";
 static struct txn *cur_txn;
@@ -33,7 +34,7 @@ static struct log_node *tree_log;
 void write_to_log(const char *entry)
 {
 	int log = glibc_open(undo_log, O_RDWR | O_APPEND, 0644);
-	glibc_write(log, entry, strlen(entry));
+	int write = glibc_write(log, entry, strlen(entry));
 	fsync(log);
 	close(log);
 }
@@ -110,7 +111,38 @@ char *nexttok(char *line)
 }
 
 /**
- * tree methods
+ * vanilla log recovery methods
+ */
+
+int vanilla_undo_create(const char *path)
+{
+
+}
+
+int recover_log()
+{
+	char reversed_log[4096];
+	char cmd[4096];
+	sprintf(reversed_log, "logs/reversed_log");
+	sprintf(cmd, "tail -r %s > %s", undo_log, reversed_log);
+	printf("cmd: %s|\n", cmd);
+	system("tac logs/undo_log > reversed_log");
+	printf("tac done\n");
+	// FILE *fptr = fopen(reversed_log, "r");
+	// char entry[4096];
+	// while (fgets(entry, 4096, fptr)) {
+	// 	char *op = nexttok(entry);
+	// 	printf("op: %s\n", op);
+	// 	if (strcmp("create", op) == 0) {
+	//
+	// 	} else if (strcmp("remove", op) == 0) {
+	//
+	// 	}
+	// }
+}
+
+/**
+ * tree recovery methods
  */
 
 // returns child node (created or found)
@@ -160,10 +192,30 @@ struct log_node *add_to_tree(const char *path)
 	return branch;
 }
 
+void build_tree()
+{
+	// build tree first
+	FILE *fptr = fopen(undo_log, "r");
+	char entry[4096];
+	while (fgets(entry, 4096, fptr)) {
+		char *op = nexttok(entry);
+		if (strcmp("create", op) == 0) {
+			char *path = nexttok(entry);
+			struct log_node *branch = add_to_tree(path);
+			branch->created = 1;
+		} else if (strcmp("remove", op) == 0) {
+			char *path = nexttok(entry);
+			struct log_node *branch = add_to_tree(path);
+			branch->removed = 1;
+		}
+	}
+}
+
 // return 0 on success; nonzero otherwise
 int recover_tree()
 {
-	// in order, undo creates, removes, writes, then metadata
+	build_tree();
+	// TODO: do recovery
 }
 
 /**
@@ -220,21 +272,8 @@ int recover()
 	if (access(undo_log, F_OK) == -1)
 		return 0;
 
-	// build tree first
-	FILE *fptr = fopen(undo_log, "r");
-	char entry[4096];
-	while (fgets(entry, 4096, fptr)) {
-		char *op = nexttok(entry);
-		if (strcmp("create", op) == 0) {
-			char *path = nexttok(entry);
-			struct log_node *branch = add_to_tree(path);
-			branch->created = 1;
-		} else if (strcmp("remove", op) == 0) {
-			char *path = nexttok(entry);
-			struct log_node *branch = add_to_tree(path);
-			branch->removed = 1;
-		}
-	}
+	recover_log();
+	// recover_tree();
 }
 
 /**
@@ -261,13 +300,27 @@ int open(const char *pathname, int flags, ...)
 		add_to_logged(pathname);
 	}
 
+	char entry[4096];
+	char *rp = realpath_missing(pathname);
 	// check if file already exists (don't infer from flags)
 	if ((flags & O_CREAT) && access(pathname, F_OK) == -1) {
-		char entry[4096];
-		char *rp = realpath_missing(pathname);
 		sprintf(entry, "create %s\n", rp);
-		write_to_log(entry);
+	} else {
+		// create metadata file backup
+		char metadata_loc[4096];
+		sprintf(metadata_loc, "%s/%d.meta", log_dir, backup_id);
+		int metadata = open(metadata_loc, O_CREAT | O_EXCL, 0644);
+		close(metadata);
+
+		// copy metadata to backup
+		char cmd[4096];
+		sprintf(cmd, "touch -r %s %s", pathname, metadata_loc);
+		system(cmd);
+
+		// create log entry
+		sprintf(entry, "touch %s %d.meta\n", rp, backup_id++); // backup_id is metadata
 	}
+	write_to_log(entry);
 
 	if (flags & (O_CREAT | O_TMPFILE)) {
 		va_list args;
