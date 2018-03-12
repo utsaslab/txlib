@@ -31,6 +31,18 @@ static struct log_node *tree_log;
  * helper methods
  */
 
+void initialize()
+{
+        // expose glibc_open (TODO: should I initialize/do this differently?)
+	glibc_open = dlsym(RTLD_NEXT, "open"); // TODO: what is RTLD_NEXT?
+	glibc_mkdir = dlsym(RTLD_NEXT, "mkdir");
+	glibc_remove = dlsym(RTLD_NEXT, "remove");
+	glibc_read = dlsym(RTLD_NEXT, "read");
+	glibc_write = dlsym(RTLD_NEXT, "write");
+
+	init = 1;
+}
+
 void write_to_log(const char *entry)
 {
 	int log = glibc_open(undo_log, O_RDWR | O_APPEND, 0644);
@@ -89,18 +101,6 @@ int already_logged(const char *name)
 	return 0;
 }
 
-void initialize()
-{
-	// expose glibc_open (TODO: should I initialize/do this differently?)
-	glibc_open = dlsym(RTLD_NEXT, "open"); // TODO: what is RTLD_NEXT?
-	glibc_mkdir = dlsym(RTLD_NEXT, "mkdir");
-	glibc_remove = dlsym(RTLD_NEXT, "remove");
-	glibc_read = dlsym(RTLD_NEXT, "read");
-	glibc_write = dlsym(RTLD_NEXT, "write");
-
-	init = 1;
-}
-
 // custom implementation of parsing undo logs
 char *nexttok(char *line)
 {
@@ -108,6 +108,43 @@ char *nexttok(char *line)
 		return strtok(NULL, " ");
 	else
 		return strtok(line, " \n");
+}
+
+// for some reason, there is no easy way of doing this
+// I tried calling system("tac ..."), but that freezes for some reason
+// and there is no easy way in C to do this afaik :|
+void generate_reversed_log()
+{
+	// find number of lines
+	int lines = 0;
+	FILE *fptr = fopen(undo_log, "r");
+	char temp[4096];
+	while (fgets(temp, 4096, fptr))
+		lines++;
+
+	// create reversed log
+	char reversed_log[4096];
+	sprintf(reversed_log, "%s/%s", log_dir, "reversed_log");
+	int rev = glibc_open(reversed_log, O_CREAT | O_RDWR, 0644);
+	for (int i = lines; i > 0; i--) {
+		rewind(fptr);
+		char entry[4096];
+		for (int j = 0; j < i; j++)
+			fgets(entry, 4096, fptr);
+		glibc_write(rev, entry, strlen(entry));
+	}
+	close(rev);
+}
+
+/**
+ * testing
+ */
+
+void crash()
+{
+	cur_txn = NULL;
+	logged = NULL;
+	tree_log = NULL;
 }
 
 /**
@@ -121,24 +158,8 @@ int vanilla_undo_create(const char *path)
 
 int recover_log()
 {
-	char reversed_log[4096];
-	char cmd[4096];
-	sprintf(reversed_log, "logs/reversed_log");
-	sprintf(cmd, "tail -r %s > %s", undo_log, reversed_log);
-	printf("cmd: %s|\n", cmd);
-	system("tac logs/undo_log > reversed_log");
-	printf("tac done\n");
-	// FILE *fptr = fopen(reversed_log, "r");
-	// char entry[4096];
-	// while (fgets(entry, 4096, fptr)) {
-	// 	char *op = nexttok(entry);
-	// 	printf("op: %s\n", op);
-	// 	if (strcmp("create", op) == 0) {
-	//
-	// 	} else if (strcmp("remove", op) == 0) {
-	//
-	// 	}
-	// }
+	generate_reversed_log();
+	// TODO: process the reversed log
 }
 
 /**
@@ -274,17 +295,7 @@ int recover()
 
 	recover_log();
 	// recover_tree();
-}
-
-/**
- * testing
- */
-
-void crash()
-{
-	cur_txn = NULL;
-	logged = NULL;
-	tree_log = NULL;
+	remove(undo_log);
 }
 
 /**
@@ -295,6 +306,18 @@ int open(const char *pathname, int flags, ...)
 {
 	recover();
 
+	// just route to glibc if not in txn
+	if (!cur_txn) {
+		if (flags & (O_CREAT | O_TMPFILE)) {
+			va_list args;
+			va_start(args, flags);
+			int mode = va_arg(args, int);
+			return glibc_open(pathname, flags, mode);
+		} else {
+			return glibc_open(pathname, flags);
+		}
+	}
+
 	// TODO: save metadata if not yet seen
 	if (!already_logged(pathname)) {
 		add_to_logged(pathname);
@@ -303,13 +326,15 @@ int open(const char *pathname, int flags, ...)
 	char entry[4096];
 	char *rp = realpath_missing(pathname);
 	// check if file already exists (don't infer from flags)
-	if ((flags & O_CREAT) && access(pathname, F_OK) == -1) {
+	int creating = flags & O_CREAT;
+	int exists = (access(pathname, F_OK) == 0);
+	if (creating && !exists) {
 		sprintf(entry, "create %s\n", rp);
-	} else {
+	} else if (!creating && exists) {
 		// create metadata file backup
 		char metadata_loc[4096];
 		sprintf(metadata_loc, "%s/%d.meta", log_dir, backup_id);
-		int metadata = open(metadata_loc, O_CREAT | O_EXCL, 0644);
+		int metadata = glibc_open(metadata_loc, O_CREAT | O_EXCL, 0644);
 		close(metadata);
 
 		// copy metadata to backup
@@ -336,15 +361,17 @@ ssize_t write(int fd, const void *buf, size_t count)
 {
 	recover();
 
-	off_t pos = lseek(fd, 0, SEEK_CUR);
-	char *path = get_path_from_fd(fd);
-	char entry[4096];
-	/**
-	 * TODO: need a way to figure out how many bytes will actually
-	 *       be written, or log would be inaccurate if count is not returned
-	 */
-	sprintf(entry, "write %s %ld %ld", path, pos, count);
-	write_to_log(entry);
+	if (cur_txn) {
+		off_t pos = lseek(fd, 0, SEEK_CUR);
+		char *path = get_path_from_fd(fd);
+		char entry[4096];
+		/**
+		 * TODO: need a way to figure out how many bytes will actually
+		 *       be written, or log would be inaccurate if count is not returned
+		 */
+		sprintf(entry, "write %s %ld %ld\n", path, pos, count);
+		write_to_log(entry);
+	}
 
 	return glibc_write(fd, buf, count);
 }
