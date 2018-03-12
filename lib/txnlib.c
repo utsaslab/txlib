@@ -23,13 +23,12 @@ static int next_id; // TODO: prevent overflow
 static int backup_id;
 static const char *log_dir = "logs";
 static const char *undo_log = "logs/undo_log";
+static const char *reversed_log = "logs/reversed_log";
 static struct txn *cur_txn;
 static struct file_node *logged;
 static struct log_node *tree_log;
 
-/**
- * helper methods
- */
+// ========== helper methods ==========
 
 void initialize()
 {
@@ -45,21 +44,25 @@ void initialize()
 
 void write_to_log(const char *entry)
 {
-	int log = glibc_open(undo_log, O_RDWR | O_APPEND, 0644);
+	int log = glibc_open(undo_log, O_RDWR | O_APPEND);
 	int write = glibc_write(log, entry, strlen(entry));
-	fsync(log);
+	int err = fsync(log);
+	if (err)
+		printf("Error while flushing log: %s\n", strerror(errno));
 	close(log);
 }
 
-// need to free returned pointer after done
+// returns absolute path even if file doesn't exist
+// (need to free returned pointer)
 char *realpath_missing(const char *path)
 {
+	int size = 4096;
+	char *rp = malloc(size);
+
 	char command[4096]; // TODO: arbitrary
 	sprintf(command, "realpath -m %s", path);
 	FILE *out = popen(command, "r");
 
-	int size = 4096;
-	char *rp = malloc(size);
 	fgets(rp, size, out);
 	rp[strlen(rp)-1] = 0; // trim the newline off
 	return rp;
@@ -67,7 +70,6 @@ char *realpath_missing(const char *path)
 
 char *get_path_from_fd(int fd)
 {
-	// TODO: check -1 -> error?
 	char *path = malloc(4096);
 	char link[4096];
 	sprintf(link, "/proc/self/fd/%d", fd);
@@ -104,10 +106,7 @@ int already_logged(const char *name)
 // custom implementation of parsing undo logs
 char *nexttok(char *line)
 {
-	if (line == NULL)
-		return strtok(NULL, " ");
-	else
-		return strtok(line, " \n");
+	return strtok(line, line ? " \n" : " ");
 }
 
 // for some reason, there is no easy way of doing this
@@ -116,17 +115,15 @@ char *nexttok(char *line)
 void generate_reversed_log()
 {
 	// find number of lines
-	int lines = 0;
+	int num_lines = 0;
 	FILE *fptr = fopen(undo_log, "r");
 	char temp[4096];
 	while (fgets(temp, 4096, fptr))
-		lines++;
+		num_lines++;
 
-	// create reversed log
-	char reversed_log[4096];
-	sprintf(reversed_log, "%s/%s", log_dir, "reversed_log");
+	// iterate backwards
 	int rev = glibc_open(reversed_log, O_CREAT | O_RDWR, 0644);
-	for (int i = lines; i > 0; i--) {
+	for (int i = num_lines; i > 0; i--) {
 		rewind(fptr);
 		char entry[4096];
 		for (int j = 0; j < i; j++)
@@ -145,67 +142,80 @@ off_t filesize(const char *path)
 		return -1;
 }
 
-/**
- * testing
- */
+// ========== testing ==========
 
 void crash()
 {
 	cur_txn = NULL;
 	logged = NULL;
-	tree_log = NULL;
 }
 
-/**
- * vanilla log recovery methods
- */
+// ========== vanilla log recovery methods ==========
+
+int undo_create(const char *path)
+{
+	return remove(path);
+}
+
+int undo_write(const char *path, int pos, int range, const char *backup)
+{
+	off_t size = filesize(path);
+	off_t backup_size = filesize(backup);
+	int to_end = size - (pos + range);
+
+	// original file = first + insert + second
+	char *first = malloc(pos);
+	char *second = malloc(to_end);
+	char *insert = malloc(backup_size);
+
+	int dirty = glibc_open(path, O_RDWR);
+	int first_bytes = glibc_read(dirty, first, pos);
+	lseek(dirty, range, SEEK_CUR);
+	int second_bytes = glibc_read(dirty, second, to_end);
+	int bup = glibc_open(backup, O_RDWR);
+	int backup_bytes = glibc_read(bup, insert, backup_size);
+
+	// check that bytes read is expected
+	if (first_bytes != pos ||
+	    second_bytes != to_end ||
+	    backup_bytes != backup_size) {
+		printf("Error in undo_write.\n");
+		return -1;
+	}
+
+	// create original file and replace modified one
+	int orig = glibc_open("logs/original", O_CREAT | O_RDWR, 0644);
+	glibc_write(orig, first, pos);
+	glibc_write(orig, insert, backup_size);
+	glibc_write(orig, second, to_end);
+	close(orig);
+	rename("logs/original", path);
+}
 
 int recover_log()
 {
 	generate_reversed_log();
 	// TODO: process the reversed log
-	FILE *fptr = fopen("logs/reversed_log", "r");
+	FILE *fptr = fopen(reversed_log, "r");
 	char entry[4096];
 	while (fgets(entry, 4096, fptr)) {
 		char *op = nexttok(entry);
 		if (strcmp("create", op) == 0) {
 			char *path = strtok(nexttok(NULL), "\n");
-			remove(path);
+			undo_create(path);
 		} else if (strcmp("remove", op) == 0) {
 			// TODO: fill in
 		} else if (strcmp("write", op) == 0) {
 			char *path = nexttok(NULL);
 			int pos = atoi(nexttok(NULL));
 			int range = atoi(nexttok(NULL));
-			char *backup_path = strtok(nexttok(NULL), "\n");
-			off_t size = filesize(path);
-			off_t bup_size = filesize(backup_path);
-
-			char *first = malloc(pos);
-			char *mid = malloc(bup_size);
-			char *second = malloc(size - (pos + range));
-			int undone = glibc_open(path, O_RDWR);
-			int red = glibc_read(undone, first, pos);
-			lseek(undone, range, SEEK_CUR);
-			int blue = glibc_read(undone, second, size - (pos + range));
-			int bup = glibc_open(backup_path, O_RDWR);
-			int wow = glibc_read(bup, mid, bup_size);
-
-			int orig = glibc_open("logs/original", O_CREAT | O_RDWR, 0644);
-			glibc_write(orig, first, pos);
-			glibc_write(orig, mid, bup_size);
-			glibc_write(orig, second, size - (pos + range));
-			close(orig);
-
-			remove(path);
-			rename("logs/original", path);
+			char *backup_path = strtok(nexttok(NULL), "\n"); // trim newline
+			undo_write(path, pos, range, backup_path);
 		}
 	}
 }
 
-/**
- * tree recovery methods
- */
+// ========== tree recovery methods ==========
 
 // returns child node (created or found)
 struct log_node *find_child(struct log_node *parent, const char *name, int create)
@@ -280,9 +290,7 @@ int recover_tree()
 	// TODO: do recovery
 }
 
-/**
- * API
- */
+// ========== API ==========
 
 int begin_txn(void)
 {
@@ -339,9 +347,7 @@ int recover()
 	remove(undo_log);
 }
 
-/**
- * glibc wrappers
- */
+// ========== glibc wrappers ==========
 
 int open(const char *pathname, int flags, ...)
 {
