@@ -157,6 +157,11 @@ int undo_create(const char *path)
 	return remove(path);
 }
 
+int undo_remove(const char *path, const char *backup)
+{
+	return rename(backup, path);
+}
+
 int undo_write(const char *path, int pos, int range, const char *backup)
 {
 	off_t size = filesize(path);
@@ -201,10 +206,12 @@ int recover_log()
 	while (fgets(entry, 4096, fptr)) {
 		char *op = nexttok(entry);
 		if (strcmp("create", op) == 0) {
-			char *path = strtok(nexttok(NULL), "\n");
+			char *path = strtok(nexttok(NULL), "\n"); // trim newline
 			undo_create(path);
 		} else if (strcmp("remove", op) == 0) {
-			// TODO: fill in
+			char *path = nexttok(NULL);
+			char *backup = strtok(nexttok(NULL), "\n"); // newline
+			undo_remove(path, backup);
 		} else if (strcmp("write", op) == 0) {
 			char *path = nexttok(NULL);
 			int pos = atoi(nexttok(NULL));
@@ -405,6 +412,18 @@ int open(const char *pathname, int flags, ...)
 	} else {
 		return glibc_open(pathname, flags);
 	}
+}
+
+int remove(const char *pathname)
+{
+	char entry[4096];
+	char backup[4096];
+	char *rp = realpath_missing(pathname);
+	sprintf(backup, "%s/%d", log_dir, backup_id);
+	sprintf(entry, "remove %s %s", rp, backup);
+	write_to_log(entry);
+
+	return rename(pathname, backup);
 }
 
 ssize_t write(int fd, const void *buf, size_t count)
