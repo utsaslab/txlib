@@ -136,6 +136,15 @@ void generate_reversed_log()
 	close(rev);
 }
 
+off_t filesize(const char *path)
+{
+	struct stat metadata;
+	if (stat(path, &metadata) == 0)
+		return metadata.st_size;
+	else
+		return -1;
+}
+
 /**
  * testing
  */
@@ -162,6 +171,34 @@ int recover_log()
 		if (strcmp("create", op) == 0) {
 			char *path = strtok(nexttok(NULL), "\n");
 			remove(path);
+		} else if (strcmp("remove", op) == 0) {
+			// TODO: fill in
+		} else if (strcmp("write", op) == 0) {
+			char *path = nexttok(NULL);
+			int pos = atoi(nexttok(NULL));
+			int range = atoi(nexttok(NULL));
+			char *backup_path = strtok(nexttok(NULL), "\n");
+			off_t size = filesize(path);
+			off_t bup_size = filesize(backup_path);
+
+			char *first = malloc(pos);
+			char *mid = malloc(bup_size);
+			char *second = malloc(size - (pos + range));
+			int undone = glibc_open(path, O_RDWR);
+			int red = glibc_read(undone, first, pos);
+			lseek(undone, range, SEEK_CUR);
+			int blue = glibc_read(undone, second, size - (pos + range));
+			int bup = glibc_open(backup_path, O_RDWR);
+			int wow = glibc_read(bup, mid, bup_size);
+
+			int orig = glibc_open("logs/original", O_CREAT | O_RDWR, 0644);
+			glibc_write(orig, first, pos);
+			glibc_write(orig, mid, bup_size);
+			glibc_write(orig, second, size - (pos + range));
+			close(orig);
+
+			remove(path);
+			rename("logs/original", path);
 		}
 	}
 }
@@ -308,6 +345,9 @@ int recover()
 
 int open(const char *pathname, int flags, ...)
 {
+	if (!init)
+		initialize();
+
 	recover();
 
 	// just route to glibc if not in txn
@@ -342,9 +382,9 @@ int open(const char *pathname, int flags, ...)
 		close(metadata);
 
 		// copy metadata to backup
-		char cmd[4096];
-		sprintf(cmd, "touch -r %s %s", pathname, metadata_loc);
-		system(cmd);
+		// char cmd[4096];
+		// sprintf(cmd, "touch -r %s %s", pathname, metadata_loc);
+		// system(cmd);
 
 		// create log entry
 		sprintf(entry, "touch %s %d.meta\n", rp, backup_id++); // backup_id is metadata
@@ -363,17 +403,34 @@ int open(const char *pathname, int flags, ...)
 
 ssize_t write(int fd, const void *buf, size_t count)
 {
+	if (!init)
+		initialize();
+
 	recover();
 
 	if (cur_txn) {
 		off_t pos = lseek(fd, 0, SEEK_CUR);
 		char *path = get_path_from_fd(fd);
 		char entry[4096];
+
+		// backup data that will be overwritten
+		char *bup = malloc(count);
+		int read_fd = glibc_open(path, O_RDWR);
+		lseek(read_fd, pos, SEEK_SET);
+		int bup_size = glibc_read(read_fd, bup, count);
+
+		char backup_loc[4096];
+		sprintf(backup_loc, "%s/%d.data", log_dir, backup_id++);
+		int backup_data = glibc_open(backup_loc, O_CREAT | O_RDWR, 0644);
+		glibc_write(backup_data, bup, bup_size);
+		fsync(backup_data);
+		close(backup_data);
+
 		/**
 		 * TODO: need a way to figure out how many bytes will actually
 		 *       be written, or log would be inaccurate if count is not returned
 		 */
-		sprintf(entry, "write %s %ld %ld\n", path, pos, count);
+		sprintf(entry, "write %s %ld %ld %s\n", path, pos, count, backup_loc);
 		write_to_log(entry);
 	}
 

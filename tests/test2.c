@@ -17,7 +17,7 @@ int main(int argc, char **argv)
 
 	crash();
 
-	int fd1 = open("out/test2.out", O_RDWR, 0644);
+	int fd1 = open("out/test2.out", O_RDWR);
 	if (fd1 == -1) {
 		int fd2 = open("out/test2.out", O_CREAT | O_RDWR, 0644);
 		write(fd2, "this did not exist\n", 19);
