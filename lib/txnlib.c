@@ -151,15 +151,19 @@ void crash()
  * vanilla log recovery methods
  */
 
-int vanilla_undo_create(const char *path)
-{
-
-}
-
 int recover_log()
 {
 	generate_reversed_log();
 	// TODO: process the reversed log
+	FILE *fptr = fopen("logs/reversed_log", "r");
+	char entry[4096];
+	while (fgets(entry, 4096, fptr)) {
+		char *op = nexttok(entry);
+		if (strcmp("create", op) == 0) {
+			char *path = strtok(nexttok(NULL), "\n");
+			remove(path);
+		}
+	}
 }
 
 /**
