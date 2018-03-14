@@ -376,7 +376,7 @@ int recover()
 
 	recover_log();
 	// recover_tree();
-	// glibc_remove(undo_log);
+	glibc_remove(undo_log);
 }
 
 // ========== glibc wrappers ==========
