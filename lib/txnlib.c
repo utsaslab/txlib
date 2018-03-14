@@ -30,6 +30,13 @@ static struct log_node *tree_log;
 
 // ========== helper methods ==========
 
+// TODO: there is some weird stuff regarding linking and system() and global
+//       variables that I cannot figure out, so we'll do this for now
+int crashed()
+{
+	return access("logs/crashed", F_OK) == 0;
+}
+
 void initialize()
 {
         // expose glibc_open (TODO: should I initialize/do this differently?)
@@ -146,6 +153,8 @@ off_t filesize(const char *path)
 
 void crash()
 {
+	int fd = glibc_open("logs/crashed", O_CREAT, 0644);
+	close(fd);
 	cur_txn = NULL;
 	logged = NULL;
 }
@@ -154,7 +163,7 @@ void crash()
 
 int undo_create(const char *path)
 {
-	return remove(path);
+	return glibc_remove(path);
 }
 
 int undo_remove(const char *path, const char *backup)
@@ -197,6 +206,14 @@ int undo_write(const char *path, int pos, int range, const char *backup)
 	rename("logs/original", path);
 }
 
+int undo_touch(const char *path, const char *metadata)
+{
+	char cmd[4096];
+	sprintf(cmd, "touch -r %s %s", metadata, path);
+	system(cmd);
+	return 0;
+}
+
 int recover_log()
 {
 	generate_reversed_log();
@@ -216,8 +233,12 @@ int recover_log()
 			char *path = nexttok(NULL);
 			int pos = atoi(nexttok(NULL));
 			int range = atoi(nexttok(NULL));
-			char *backup_path = strtok(nexttok(NULL), "\n"); // trim newline
-			undo_write(path, pos, range, backup_path);
+			char *backup = strtok(nexttok(NULL), "\n"); // trim newline
+			undo_write(path, pos, range, backup);
+		} else if (strcmp("touch", op) == 0) {
+			char *path = nexttok(NULL);
+			char *metadata = strtok(nexttok(NULL), "\n");
+			undo_touch(path, metadata);
 		}
 	}
 }
@@ -342,6 +363,10 @@ int end_txn(int txn_id)
 
 int recover()
 {
+	if (!crashed())
+		return 0;
+	glibc_remove("logs/crashed");
+
 	if (cur_txn)
 		return 0;
 
@@ -351,7 +376,7 @@ int recover()
 
 	recover_log();
 	// recover_tree();
-	remove(undo_log);
+	// glibc_remove(undo_log);
 }
 
 // ========== glibc wrappers ==========
@@ -390,17 +415,17 @@ int open(const char *pathname, int flags, ...)
 	} else if (!creating && exists) {
 		// create metadata file backup
 		char metadata_loc[4096];
-		sprintf(metadata_loc, "%s/%d.meta", log_dir, backup_id);
+		sprintf(metadata_loc, "%s/%d.meta", log_dir, backup_id++);
 		int metadata = glibc_open(metadata_loc, O_CREAT | O_EXCL, 0644);
 		close(metadata);
 
 		// copy metadata to backup
-		// char cmd[4096];
-		// sprintf(cmd, "touch -r %s %s", pathname, metadata_loc);
-		// system(cmd);
+		char cmd[4096];
+		sprintf(cmd, "touch -r %s %s", pathname, metadata_loc);
+		system(cmd);
 
 		// create log entry
-		sprintf(entry, "touch %s %d.meta\n", rp, backup_id++); // backup_id is metadata
+		sprintf(entry, "touch %s %s\n", rp, metadata_loc);
 	}
 	write_to_log(entry);
 

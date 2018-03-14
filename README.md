@@ -51,6 +51,7 @@ txnlib currently wraps:
   * `close`
   * `rename` + `renameat` + `renameat2`
   * `access` + `faccessat`
+  * `chmod`
   * `truncate` + `ftruncate`
   * `ftell` + `fseek` + `lseek`
   * (much mo fsho)
