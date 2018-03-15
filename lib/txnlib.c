@@ -376,7 +376,7 @@ int recover()
 
 	recover_log();
 	// recover_tree();
-	glibc_remove(undo_log);
+	// glibc_remove(undo_log);
 }
 
 // ========== glibc wrappers ==========
@@ -463,6 +463,13 @@ ssize_t write(int fd, const void *buf, size_t count)
 		char *path = get_path_from_fd(fd);
 		char entry[4096];
 
+		off_t fsize = filesize(path);
+		int zeros = 0; // lseek past filesize fills with zeros
+		if (fsize < pos) {
+			zeros = pos - fsize;
+			pos = fsize;
+		}
+
 		// backup data that will be overwritten
 		char *bup = malloc(count);
 		int read_fd = glibc_open(path, O_RDWR);
@@ -480,7 +487,7 @@ ssize_t write(int fd, const void *buf, size_t count)
 		 * TODO: need a way to figure out how many bytes will actually
 		 *       be written, or log would be inaccurate if count is not returned
 		 */
-		sprintf(entry, "write %s %ld %ld %s\n", path, pos, count, backup_loc);
+		sprintf(entry, "write %s %ld %ld %s\n", path, pos, count + zeros, backup_loc);
 		write_to_log(entry);
 	}
 

@@ -1,4 +1,5 @@
 CFLAGS = -Wall
+FSXFLAGS = -N 339
 LIBDIR = lib
 OUTDIR = out
 TESTDIR = tests
@@ -26,8 +27,10 @@ test:
 		echo "\n\n--------- found ---------"; cat $(OUTDIR)/test$$i.out) \
 	done \
 
-clean:
-	rm -rf libtxn.so logs/* $(OUTDIR)/
+fsx:
+	rm -rf $(OUTDIR); mkdir $(OUTDIR) && touch $(OUTDIR)/temp.txt && \
+	gcc ports/fsx-linux.c -I$(LIBDIR) -L. -ltxn -o ports/fsx -ldl && \
+	LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./ports/fsx out/temp.txt $(FSXFLAGS) \
 
-lint:
-	./checkpatch.pl -q --no-tree -f $(LIBDIR)/*
+clean:
+	rm -rf libtxn.so logs/ $(OUTDIR)/

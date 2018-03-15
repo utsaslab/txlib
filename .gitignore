@@ -51,6 +51,10 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
+# fsx
+ports/fsx
+ports/*.txt*
+
 # random
 logs/
 out/
