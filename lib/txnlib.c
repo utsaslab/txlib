@@ -188,11 +188,16 @@ int undo_write(const char *path, int pos, int range, const char *backup)
 	int second_bytes = glibc_read(dirty, second, to_end);
 	int bup = glibc_open(backup, O_RDWR);
 	int backup_bytes = glibc_read(bup, insert, backup_size);
+	close(dirty);
+	close(bup);
 
 	// check that bytes read is expected
 	if (first_bytes != pos ||
 	    second_bytes != to_end ||
 	    backup_bytes != backup_size) {
+		printf("first: %d %d\n", first_bytes, pos);
+		printf("second: %d %d\n", second_bytes, to_end);
+		printf("backup: %d %d\n", backup_bytes, bup);
 		printf("Error in undo_write.\n");
 		return -1;
 	}
@@ -204,6 +209,10 @@ int undo_write(const char *path, int pos, int range, const char *backup)
 	glibc_write(orig, second, to_end);
 	close(orig);
 	rename("logs/original", path);
+
+	free(first);
+	free(second);
+	free(insert);
 }
 
 int undo_touch(const char *path, const char *metadata)
@@ -475,6 +484,7 @@ ssize_t write(int fd, const void *buf, size_t count)
 		int read_fd = glibc_open(path, O_RDWR);
 		lseek(read_fd, pos, SEEK_SET);
 		int bup_size = glibc_read(read_fd, bup, count);
+		close(read_fd);
 
 		char backup_loc[4096];
 		sprintf(backup_loc, "%s/%d.data", log_dir, backup_id++);
