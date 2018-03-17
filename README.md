@@ -41,19 +41,21 @@ txnlib currently wraps:
 * `mkdir`
 * `remove`
 * `write`
+
+txnlib omits:
+
+* `read`
 * `close`
+* `lseek`
 
 ## TODO
 
 * wrap
   * `creat` + `openat`
-  * `read`
-  * `close`
   * `rename` + `renameat` + `renameat2`
   * `access` + `faccessat`
   * `chmod`
   * `truncate` + `ftruncate`
-  * `ftell` + `fseek` + `lseek`
   * (much mo fsho)
 
 ## Design and Implementation

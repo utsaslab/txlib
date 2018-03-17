@@ -51,9 +51,7 @@ int rmdir(const char *pathname);
 int unlinkat(int dirfd, const char *pathname, int flags);
 
 // within file
-ssize_t read(int fd, void *buf, size_t count);
 ssize_t write(int fd, const void *buf, size_t count);
 int access(const char *pathname, int mode);
-int close(int fd); // keep track close so we do not fail to replicate errors from original program
 
 #endif // TXNLIB_H_
