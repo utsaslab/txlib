@@ -226,7 +226,6 @@ int undo_touch(const char *path, const char *metadata)
 int recover_log()
 {
 	generate_reversed_log();
-	// TODO: process the reversed log
 	FILE *fptr = fopen(reversed_log, "r");
 	char entry[4096];
 	while (fgets(entry, 4096, fptr)) {
@@ -450,6 +449,14 @@ int open(const char *pathname, int flags, ...)
 
 int remove(const char *pathname)
 {
+	if (!init)
+		initialize();
+
+	recover();
+
+	if (!cur_txn)
+		return glibc_remove(pathname);
+
 	char entry[4096];
 	char backup[4096];
 	char *rp = realpath_missing(pathname);

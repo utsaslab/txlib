@@ -700,8 +700,8 @@ test(void)
 	unsigned long	offset;
 	unsigned long	size = maxoplen;
 	unsigned long	rv = random();
-	// unsigned long	op = rv % (3 + !lite + mapped_writes);
-	unsigned long	op = 1;
+	unsigned long	op = rv % (3 + !lite + mapped_writes);
+	// unsigned long	op = 1;
 
         /* turn off the map read if necessary */
 
@@ -1002,7 +1002,11 @@ main(int argc, char **argv)
 		exit(91);
 	}
 	strncat(goodfile, fname, 256);
+	printf(goodfile);
+	printf("\n");
 	strcat (goodfile, ".fsxgood");
+	printf(goodfile);
+	printf("\n");
 	fsxgoodfd = open(goodfile, O_RDWR|O_CREAT|O_TRUNC, 0666);
 	if (fsxgoodfd < 0) {
 		prterr(goodfile);
@@ -1053,19 +1057,17 @@ main(int argc, char **argv)
 	} else
 		check_trunc_hack();
 
-	int pls = open("out/temp.txt", O_RDWR, 0644);
-	write(pls, "original\nboi\n", 13);
-	close(pls);
-
-	int id = begin_txn();
+	// int id = begin_txn();
 
 	while (numops == -1 || numops--) {
 		test();
-		printf("%d\n", numops);
+		if (numops % 100 == 0)
+			printf("%d\n", numops);
 	}
 
-	crash();
-	recover();
+	// end_txn(id);
+	// crash();
+	// recover();
 
 	if (close(fd)) {
 		prterr("close");

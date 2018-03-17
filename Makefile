@@ -1,8 +1,8 @@
 CFLAGS = -Wall
-FSXFLAGS = -N 339
 LIBDIR = lib
 OUTDIR = out
 TESTDIR = tests
+FSXFLAGS = -N 100000
 
 .PHONY: all test clean
 .SILENT:
@@ -28,9 +28,9 @@ test:
 	done \
 
 fsx:
-	rm -rf $(OUTDIR); mkdir $(OUTDIR) && touch $(OUTDIR)/temp.txt && \
+	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
 	gcc ports/fsx-linux.c -I$(LIBDIR) -L. -ltxn -o ports/fsx -ldl && \
-	LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./ports/fsx out/temp.txt $(FSXFLAGS) \
+	LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./ports/fsx $(OUTDIR)/temp.txt $(FSXFLAGS) \
 
 clean:
 	rm -rf libtxn.so logs/ $(OUTDIR)/
