@@ -460,8 +460,8 @@ int remove(const char *pathname)
 	char entry[4096];
 	char backup[4096];
 	char *rp = realpath_missing(pathname);
-	sprintf(backup, "%s/%d", log_dir, backup_id);
-	sprintf(entry, "remove %s %s", rp, backup);
+	sprintf(backup, "%s/%d", log_dir, backup_id++);
+	sprintf(entry, "remove %s %s\n", rp, backup);
 	write_to_log(entry);
 
 	return rename(pathname, backup);
