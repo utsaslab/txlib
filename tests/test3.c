@@ -6,26 +6,26 @@
 
 #include "txnlib.h"
 
-// test3: one write one create then crash
+// test3: simple create then crash
 
 int main(int argc, char **argv)
 {
-        int fd = open("out/test3.out", O_CREAT | O_RDWR, 0644);
-        write(fd, "1234567890\n", 11);
-        close(fd);
-
 	int txn0 = begin_txn();
 
-	int fd1 = open("out/test3-1.out", O_CREAT | O_RDWR, 0644);
-        write(fd1, "this should be deleted later\n", 29);
-	close(fd1);
-        int fd2 = open("out/test3.out", O_RDWR);
-        write(fd2, "failure\n", 8);
-        close(fd2);
+	int fd = open("out/test3.out", O_CREAT | O_RDWR, 0644);
+	close(fd);
 
 	crash();
 
-        recover();
+	int fd1 = open("out/test3.out", O_RDWR);
+	if (fd1 == -1) {
+		int fd2 = open("out/test3.out", O_CREAT | O_RDWR, 0644);
+		write(fd2, "this did not exist\n", 19);
+		close(fd2);
+	} else {
+		write(fd1, "this file should not exist\n", 27);
+		close(fd1);
+	}
 
 	return 0;
 }

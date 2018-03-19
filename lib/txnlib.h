@@ -30,6 +30,7 @@ struct log_node {
 int begin_txn(void);
 int end_txn(int txn_id);
 int recover();
+int rollback();
 
 // for testing
 void crash();

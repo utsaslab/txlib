@@ -6,7 +6,7 @@
 
 #include "txnlib.h"
 
-// test4: simple remove
+// test4: simple remove then crash
 
 int main(int argc, char **argv)
 {
@@ -19,7 +19,6 @@ int main(int argc, char **argv)
         remove("out/test4.out");
 
 	crash();
-
         recover();
 
 	return 0;

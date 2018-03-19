@@ -8,7 +8,7 @@
 
 #include "txnlib.h"
 
-// test5: simple metadata backup
+// test5: simple metadata test
 
 int main(int argc, char **argv)
 {

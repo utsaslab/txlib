@@ -6,22 +6,25 @@
 
 #include "txnlib.h"
 
-// test1: simple nested transaction
+// test1: deeply nested transaction
 
 int main(int argc, char **argv)
 {
-	int txn0 = begin_txn();
-	int txn1 = begin_txn();
+	int depth = 1000;
+	int ids[depth];
 
+	char id[64];
 	int fd = open("out/test1.out", O_CREAT | O_RDWR, 0644);
+
+	for (int i = 0; i < depth; i++)
+		ids[i] = begin_txn();
+
 	write(fd, "hello nested transactional world\n", 33);
 	write(fd, "goodbye\n", 8);
-	if (txn0 == txn1)
-		write(fd, "ERROR: transaction ids are the same\n", 29);
 	close(fd);
 
-	end_txn(txn1);
-	end_txn(txn0);
+	for (int i = depth-1; i >= 0; i--)
+		end_txn(ids[i]);
 
 	return 0;
 }

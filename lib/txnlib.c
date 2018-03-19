@@ -352,7 +352,7 @@ int begin_txn(void)
 int end_txn(int txn_id)
 {
 	if (txn_id != cur_txn->id) {
-		printf("attempting to end (%d) but current transaction is (%d)", txn_id, cur_txn->id);
+		printf("attempting to end (%d) but current transaction is (%d)\n", txn_id, cur_txn->id);
 		return -1;
 	}
 
@@ -363,7 +363,7 @@ int end_txn(int txn_id)
 	if (!cur_txn) {
 		// commit everything and then delete log
 		sync(); // TODO: just flush touched files?
-		// remove(undo_log); // TODO: check errors?
+		glibc_remove(undo_log);
 	}
 
 	return 0;
