@@ -2,7 +2,7 @@ CFLAGS = -Wall
 LIBDIR = lib
 OUTDIR = out
 TESTDIR = tests
-FSXFLAGS = -N 100000
+FSXFLAGS = -N 20000
 
 .PHONY: all test clean
 .SILENT:
@@ -10,7 +10,7 @@ FSXFLAGS = -N 100000
 all: txnlib.so
 
 txnlib.so:
-	gcc -shared -fPIC $(LIBDIR)/txnlib.h $(LIBDIR)/txnlib.c -o libtxn.so -ldl
+	gcc $(CFLAGS) -shared -fPIC $(LIBDIR)/txnlib.h $(LIBDIR)/txnlib.c -o libtxn.so -ldl
 
 test:
 	rm -rf $(OUTDIR)/; mkdir $(OUTDIR);

@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include "txnlib.h"
 
 #include <unistd.h>
@@ -17,6 +18,7 @@ static int (*glibc_mkdir)(const char *pathname, mode_t mode);
 static int (*glibc_remove)(const char *pathname);
 static ssize_t (*glibc_read)(int fd, void *buf, size_t count);
 static ssize_t (*glibc_write)(int fd, const void *buf, size_t count);
+static int (*glibc_ftruncate)(int fd, off_t length);
 
 static int init = 0;
 static int next_id; // TODO: prevent overflow
@@ -45,6 +47,7 @@ void initialize()
 	glibc_remove = dlsym(RTLD_NEXT, "remove");
 	glibc_read = dlsym(RTLD_NEXT, "read");
 	glibc_write = dlsym(RTLD_NEXT, "write");
+	glibc_ftruncate = dlsym(RTLD_NEXT, "ftruncate");
 
 	init = 1;
 }
@@ -52,7 +55,7 @@ void initialize()
 void write_to_log(const char *entry)
 {
 	int log = glibc_open(undo_log, O_RDWR | O_APPEND);
-	int write = glibc_write(log, entry, strlen(entry));
+	int written = glibc_write(log, entry, strlen(entry));
 	int err = fsync(log);
 	if (err)
 		printf("Error while flushing log: %s\n", strerror(errno));
@@ -64,20 +67,21 @@ void write_to_log(const char *entry)
 char *realpath_missing(const char *path)
 {
 	int size = 4096;
-	char *rp = malloc(size);
+	char *rp = calloc(size, 1);
 
 	char command[4096]; // TODO: arbitrary
 	sprintf(command, "realpath -m %s", path);
 	FILE *out = popen(command, "r");
-
 	fgets(rp, size, out);
+
+	pclose(out);
 	rp[strlen(rp)-1] = 0; // trim the newline off
 	return rp;
 }
 
 char *get_path_from_fd(int fd)
 {
-	char *path = malloc(4096);
+	char *path = calloc(4096, 1);
 	char link[4096];
 	sprintf(link, "/proc/self/fd/%d", fd);
 	readlink(link, path, 4096);
@@ -464,6 +468,8 @@ int remove(const char *pathname)
 	sprintf(entry, "remove %s %s\n", rp, backup);
 	write_to_log(entry);
 
+	free(rp);
+
 	return rename(pathname, backup);
 }
 
@@ -506,7 +512,56 @@ ssize_t write(int fd, const void *buf, size_t count)
 		 */
 		sprintf(entry, "write %s %ld %ld %s\n", path, pos, count + zeros, backup_loc);
 		write_to_log(entry);
+		free(path);
 	}
 
 	return glibc_write(fd, buf, count);
+}
+
+int ftruncate(int fd, off_t length)
+{
+	if (!init)
+		initialize();
+
+	recover();
+
+	if (!cur_txn)
+		return glibc_ftruncate(fd, length);
+
+	char *path = get_path_from_fd(fd);
+	off_t size = filesize(path);
+
+	struct stat st;
+	stat(path, &st);
+
+	// TODO: reset file offset
+	if (length > size) {
+		// return glibc_ftruncate(fd, length);
+		off_t extend = length - size;
+		char *zeros = calloc(extend, 1);
+
+		int fd1 = glibc_open(path, O_RDWR, st.st_mode);
+		lseek(fd1, 0, SEEK_END);
+		write(fd1, zeros, extend); // TODO: verify written
+		close(fd1);
+
+		free(zeros);
+		free(path);
+
+		return 0;
+	} else {
+		// return glibc_ftruncate(fd, length);
+		char *trunk = malloc(length);
+		lseek(fd, 0, SEEK_SET);
+		ssize_t red = glibc_read(fd, trunk, length);
+
+		remove(path);
+		int fd1 = open(path, O_CREAT | O_RDWR, st.st_mode);
+		write(fd1, trunk, length);
+		dup2(fd1, fd);
+		close(fd1);
+
+		free(trunk);
+		return 0;
+	}
 }
