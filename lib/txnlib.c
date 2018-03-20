@@ -28,7 +28,6 @@ static const char *undo_log = "logs/undo_log";
 static const char *reversed_log = "logs/reversed_log";
 static struct txn *cur_txn;
 static struct file_node *logged;
-static struct log_node *tree_log;
 
 // ========== helper methods ==========
 
@@ -54,12 +53,22 @@ void initialize()
 
 void write_to_log(const char *entry)
 {
-	int log = glibc_open(undo_log, O_RDWR | O_APPEND);
-	int written = glibc_write(log, entry, strlen(entry));
-	int err = fsync(log);
+	int fd = glibc_open(undo_log, O_RDWR | O_APPEND);
+	if (fd == -1)
+		printf("Error opening log: %s\n", strerror(errno));
+
+	int written = glibc_write(fd, entry, strlen(entry));
+	if (written != strlen(entry))
+		printf("Error writing to log: (actual -> %d) vs (expected -> %zd) %s\n",
+			written, strlen(entry), strerror(errno));
+
+	int syn = fsync(fd);
+	if (syn)
+		printf("Error flushing log: %s\n", strerror(errno));
+
+	int err = close(fd);
 	if (err)
-		printf("Error while flushing log: %s\n", strerror(errno));
-	close(log);
+		printf("Error closing log: %s\n", strerror(errno));
 }
 
 // returns absolute path even if file doesn't exist
@@ -68,17 +77,18 @@ char *realpath_missing(const char *path)
 {
 	int size = 4096;
 	char *rp = calloc(size, 1);
-
 	char command[4096]; // TODO: arbitrary
+
 	sprintf(command, "realpath -m %s", path);
 	FILE *out = popen(command, "r");
 	fgets(rp, size, out);
-
 	pclose(out);
 	rp[strlen(rp)-1] = 0; // trim the newline off
+
 	return rp;
 }
 
+// (need to free returned pointer)
 char *get_path_from_fd(int fd)
 {
 	char *path = calloc(4096, 1);
@@ -141,6 +151,7 @@ void generate_reversed_log()
 			fgets(entry, 4096, fptr);
 		glibc_write(rev, entry, strlen(entry));
 	}
+	fclose(fptr);
 	close(rev);
 }
 
@@ -183,8 +194,8 @@ int undo_write(const char *path, int pos, int range, const char *backup)
 
 	// original file = first + insert + second
 	char *first = malloc(pos);
-	char *second = malloc(to_end);
 	char *insert = malloc(backup_size);
+	char *second = malloc(to_end);
 
 	int dirty = glibc_open(path, O_RDWR);
 	int first_bytes = glibc_read(dirty, first, pos);
@@ -208,15 +219,22 @@ int undo_write(const char *path, int pos, int range, const char *backup)
 
 	// create original file and replace modified one
 	int orig = glibc_open("logs/original", O_CREAT | O_RDWR, 0644);
-	glibc_write(orig, first, pos);
-	glibc_write(orig, insert, backup_size);
-	glibc_write(orig, second, to_end);
+	ssize_t f = glibc_write(orig, first, pos);
+	ssize_t i = glibc_write(orig, insert, backup_size);
+	ssize_t s = glibc_write(orig, second, to_end);
 	close(orig);
-	rename("logs/original", path);
+	int r = rename("logs/original", path);
 
 	free(first);
-	free(second);
 	free(insert);
+	free(second);
+
+	if (f != pos || i != backup_size || s != to_end || r) {
+		printf("Error recreating original file in undo_write.\n");
+		return -1;
+	}
+
+	return 0;
 }
 
 int undo_touch(const char *path, const char *metadata)
@@ -253,81 +271,8 @@ int recover_log()
 			undo_touch(path, metadata);
 		}
 	}
-}
-
-// ========== tree recovery methods ==========
-
-// returns child node (created or found)
-struct log_node *find_child(struct log_node *parent, const char *name, int create)
-{
-	int open_slot = -1;
-	int num_children = sizeof(parent->children) / sizeof(parent->children[0]);
-	for (int i = 0; i < num_children; i++) {
-		struct log_node *child = parent->children[i];
-		if (child) {
-			if (strcmp(name, child->name) == 0)
-				return child;
-		} else {
-			if (open_slot == -1)
-				open_slot = i;
-		}
-	}
-
-	if (create) {
-		struct log_node *new_node = malloc(sizeof(struct log_node));
-		sprintf(new_node->name, "%s", name);
-		parent->children[open_slot] = new_node;
-		return new_node;
-	}
-
-	return NULL; // not found and not created
-}
-
-struct log_node *add_to_tree(const char *path)
-{
-	// let root have empty string as name
-	if (!tree_log)
-		tree_log = malloc(sizeof(struct log_node));
-
-	char *rp = realpath_missing(path);
-	struct log_node *branch = tree_log;
-	char *sub = strtok(rp, "/");
-	while (sub != NULL) {
-		branch = find_child(branch, sub, 1);
-		if (!branch || branch->created) { // optimization, no need to log children of created
-			free(rp);
-			return NULL;
-		}
-		sub = strtok(NULL, "/");
-	}
-	free(rp);
-	return branch;
-}
-
-void build_tree()
-{
-	// build tree first
-	FILE *fptr = fopen(undo_log, "r");
-	char entry[4096];
-	while (fgets(entry, 4096, fptr)) {
-		char *op = nexttok(entry);
-		if (strcmp("create", op) == 0) {
-			char *path = nexttok(entry);
-			struct log_node *branch = add_to_tree(path);
-			branch->created = 1;
-		} else if (strcmp("remove", op) == 0) {
-			char *path = nexttok(entry);
-			struct log_node *branch = add_to_tree(path);
-			branch->removed = 1;
-		}
-	}
-}
-
-// return 0 on success; nonzero otherwise
-int recover_tree()
-{
-	build_tree();
-	// TODO: do recovery
+	fclose(fptr);
+	return 0;
 }
 
 // ========== API ==========
@@ -387,8 +332,9 @@ int recover()
 		return 0;
 
 	recover_log();
-	// recover_tree();
-	// glibc_remove(undo_log);
+	glibc_remove(undo_log);
+
+	return 0;
 }
 
 // ========== glibc wrappers ==========
@@ -439,6 +385,7 @@ int open(const char *pathname, int flags, ...)
 		// create log entry
 		sprintf(entry, "touch %s %s\n", rp, metadata_loc);
 	}
+	free(rp);
 	write_to_log(entry);
 
 	if (flags & (O_CREAT | O_TMPFILE)) {
@@ -536,7 +483,6 @@ int ftruncate(int fd, off_t length)
 
 	// TODO: reset file offset
 	if (length > size) {
-		// return glibc_ftruncate(fd, length);
 		off_t extend = length - size;
 		char *zeros = calloc(extend, 1);
 
@@ -550,10 +496,9 @@ int ftruncate(int fd, off_t length)
 
 		return 0;
 	} else {
-		// return glibc_ftruncate(fd, length);
 		char *trunk = malloc(length);
 		lseek(fd, 0, SEEK_SET);
-		ssize_t red = glibc_read(fd, trunk, length);
+		glibc_read(fd, trunk, length);
 
 		remove(path);
 		int fd1 = open(path, O_CREAT | O_RDWR, st.st_mode);
@@ -562,6 +507,7 @@ int ftruncate(int fd, off_t length)
 		close(fd1);
 
 		free(trunk);
+		free(path);
 		return 0;
 	}
 }
