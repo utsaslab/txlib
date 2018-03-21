@@ -700,8 +700,8 @@ test(void)
 	unsigned long	offset;
 	unsigned long	size = maxoplen;
 	unsigned long	rv = random();
-	unsigned long	op = rv % (3 + !lite + mapped_writes);
-	// unsigned long	op = 1;
+	// unsigned long	op = rv % (3 + !lite + mapped_writes);
+	unsigned long	op = 1; // txnlib only supports 1 and 3
 
         /* turn off the map read if necessary */
 
@@ -1002,11 +1002,7 @@ main(int argc, char **argv)
 		exit(91);
 	}
 	strncat(goodfile, fname, 256);
-	printf(goodfile);
-	printf("\n");
 	strcat (goodfile, ".fsxgood");
-	printf(goodfile);
-	printf("\n");
 	fsxgoodfd = open(goodfile, O_RDWR|O_CREAT|O_TRUNC, 0666);
 	if (fsxgoodfd < 0) {
 		prterr(goodfile);
@@ -1057,7 +1053,7 @@ main(int argc, char **argv)
 	} else
 		check_trunc_hack();
 
-	// int id = begin_txn();
+	int id = begin_txn();
 
 	while (numops == -1 || numops--) {
 		test();
@@ -1065,9 +1061,15 @@ main(int argc, char **argv)
 			printf("%d\n", numops);
 	}
 
-	// end_txn(id);
-	// crash();
-	// recover();
+	crash();
+	recover();
+
+	struct stat st;
+	fstat(fd, &st);
+	if (st.st_size == 0)
+		prt("File successfully restored after stress test!\n");
+	else
+		prt("Failed to restore file. Size is %d. (should be 0)\n", st.st_size);
 
 	if (close(fd)) {
 		prterr("close");
