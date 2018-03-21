@@ -186,7 +186,7 @@ int undo_remove(const char *path, const char *backup)
 	return rename(backup, path);
 }
 
-int undo_write(const char *path, int pos, int range, const char *backup)
+int undo_write(const char *path, int pos, int range, int past_size, const char *backup)
 {
 	off_t size = filesize(path);
 	off_t backup_size = filesize(backup);
@@ -222,6 +222,7 @@ int undo_write(const char *path, int pos, int range, const char *backup)
 	ssize_t f = glibc_write(orig, first, pos);
 	ssize_t i = glibc_write(orig, insert, backup_size);
 	ssize_t s = glibc_write(orig, second, to_end);
+	glibc_ftruncate(orig, past_size);
 	close(orig);
 	int r = rename("logs/original", path);
 
@@ -263,8 +264,9 @@ int recover_log()
 			char *path = nexttok(NULL);
 			int pos = atoi(nexttok(NULL));
 			int range = atoi(nexttok(NULL));
+			int size = atoi(nexttok(NULL));
 			char *backup = strtok(nexttok(NULL), "\n"); // trim newline
-			undo_write(path, pos, range, backup);
+			undo_write(path, pos, range, size, backup);
 		} else if (strcmp("touch", op) == 0) {
 			char *path = nexttok(NULL);
 			char *metadata = strtok(nexttok(NULL), "\n");
@@ -312,7 +314,7 @@ int end_txn(int txn_id)
 	if (!cur_txn) {
 		// commit everything and then delete log
 		sync(); // TODO: just flush touched files?
-		glibc_remove(undo_log);
+		// glibc_remove(undo_log);
 	}
 
 	return 0;
@@ -332,7 +334,7 @@ int recover()
 		return 0;
 
 	recover_log();
-	glibc_remove(undo_log);
+	// glibc_remove(undo_log);
 
 	return 0;
 }
@@ -457,7 +459,7 @@ ssize_t write(int fd, const void *buf, size_t count)
 		 * TODO: need a way to figure out how many bytes will actually
 		 *       be written, or log would be inaccurate if count is not returned
 		 */
-		sprintf(entry, "write %s %ld %ld %s\n", path, pos, count + zeros, backup_loc);
+		sprintf(entry, "write %s %ld %ld %ld %s\n", path, pos, count + zeros, fsize, backup_loc);
 		write_to_log(entry);
 		free(path);
 	}
