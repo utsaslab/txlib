@@ -36,6 +36,7 @@
 #include <unistd.h>
 #include <stdarg.h>
 #include <errno.h>
+#include <time.h>
 
 #include "txnlib.h"
 
@@ -1046,7 +1047,7 @@ main(int argc, char **argv)
 				prterr(fname);
 				warn("main: error on write");
 			} else
-				warn("main: short write, 0x%x bytes instead of 0x%x\n",
+				warn("main: short write, 0x%x bytes instead of 0x%lx\n",
 				     (unsigned)written, maxfilelen);
 			exit(98);
 		}
@@ -1058,18 +1059,20 @@ main(int argc, char **argv)
 	while (numops == -1 || numops--) {
 		test();
 		if (numops % 100 == 0)
-			printf("%d\n", numops);
+			printf("%ld\n", numops);
 	}
 
 	crash();
 	recover();
 
+	int check = open(fname, O_RDWR);
 	struct stat st;
-	fstat(fd, &st);
+	fstat(check, &st);
 	if (st.st_size == 0)
 		prt("File successfully restored after stress test!\n");
 	else
 		prt("Failed to restore file. Size is %d. (should be 0)\n", st.st_size);
+	close(check);
 
 	if (close(fd)) {
 		prterr("close");
