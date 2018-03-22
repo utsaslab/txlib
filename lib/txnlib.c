@@ -35,7 +35,9 @@ static struct file_node *logged;
 //       variables that I cannot figure out, so we'll do this for now
 int crashed()
 {
-	return access("logs/crashed", F_OK) == 0;
+	int real = !cur_txn && (access(undo_log, F_OK) == 0);
+	int virtual = access("logs/crashed", F_OK) == 0;
+	return real || virtual;
 }
 
 void initialize()
@@ -186,52 +188,23 @@ int undo_remove(const char *path, const char *backup)
 	return rename(backup, path);
 }
 
-int undo_write(const char *path, int pos, int range, int past_size, const char *backup)
+int undo_write(const char *path, int pos, int range, int prev_size, const char *backup)
 {
-	off_t size = filesize(path);
-	off_t backup_size = filesize(backup);
-	int to_end = size - (pos + range);
-
-	// original file = first + insert + second
-	char *first = malloc(pos);
-	char *insert = malloc(backup_size);
-	char *second = malloc(to_end);
-
-	int dirty = glibc_open(path, O_RDWR);
-	int first_bytes = glibc_read(dirty, first, pos);
-	lseek(dirty, range, SEEK_CUR);
-	int second_bytes = glibc_read(dirty, second, to_end);
+	char *saved = malloc(range);
 	int bup = glibc_open(backup, O_RDWR);
-	int backup_bytes = glibc_read(bup, insert, backup_size);
-	close(dirty);
+	ssize_t bupped = glibc_read(bup, saved, range);
 	close(bup);
 
-	// check that bytes read is expected
-	if (first_bytes != pos ||
-	    second_bytes != to_end ||
-	    backup_bytes != backup_size) {
-		printf("first: %d %d\n", first_bytes, pos);
-		printf("second: %d %d\n", second_bytes, to_end);
-		printf("backup: %d %d\n", backup_bytes, bup);
-		printf("Error in undo_write.\n");
-		return -1;
-	}
+	int dirty = glibc_open(path, O_RDWR);
+	lseek(dirty, pos, SEEK_SET);
+	ssize_t restored = glibc_write(dirty, saved, range);
+	glibc_ftruncate(dirty, prev_size);
+	close(dirty);
+	free(saved);
 
-	// create original file and replace modified one
-	int orig = glibc_open("logs/original", O_CREAT | O_RDWR, 0644);
-	ssize_t f = glibc_write(orig, first, pos);
-	ssize_t i = glibc_write(orig, insert, backup_size);
-	ssize_t s = glibc_write(orig, second, to_end);
-	glibc_ftruncate(orig, past_size);
-	close(orig);
-	int r = rename("logs/original", path);
-
-	free(first);
-	free(insert);
-	free(second);
-
-	if (f != pos || i != backup_size || s != to_end || r) {
-		printf("Error recreating original file in undo_write.\n");
+	if (filesize(path) != prev_size || restored != range) {
+		printf("Error in undo_write. (expected: %d, backup: %zd, restored %zd)\n",
+			range, bupped, restored);
 		return -1;
 	}
 
@@ -314,7 +287,7 @@ int end_txn(int txn_id)
 	if (!cur_txn) {
 		// commit everything and then delete log
 		sync(); // TODO: just flush touched files?
-		// glibc_remove(undo_log);
+		glibc_remove(undo_log);
 	}
 
 	return 0;
@@ -334,7 +307,8 @@ int recover()
 		return 0;
 
 	recover_log();
-	// glibc_remove(undo_log);
+	glibc_remove(undo_log);
+	system("rm logs/*");
 
 	return 0;
 }
@@ -359,6 +333,7 @@ int open(const char *pathname, int flags, ...)
 			return glibc_open(pathname, flags);
 		}
 	}
+
 
 	// TODO: save metadata if not yet seen
 	if (!already_logged(pathname)) {

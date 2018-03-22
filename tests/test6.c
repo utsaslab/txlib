@@ -22,9 +22,11 @@ int main(int argc, char **argv)
 	crash();
 
         char buf[64];
-        read(fd, buf, 30);
+        int fresh = open("out/test6.out", O_RDWR);
+        read(fresh, buf, 30);
         if (strcmp(buf, orig))
-                write(fd, "recovery failed\n", 16);
+                write(fresh, "recovery failed\n", 16);
+        close(fresh);
         close(fd);
 
 	return 0;
