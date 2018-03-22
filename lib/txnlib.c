@@ -37,7 +37,8 @@ int crashed()
 {
 	int real = !cur_txn && (access(undo_log, F_OK) == 0);
 	int virtual = access("logs/crashed", F_OK) == 0;
-	return real || virtual;
+	// return virtual;
+	return real; // uncomment for crash.c
 }
 
 void initialize()
