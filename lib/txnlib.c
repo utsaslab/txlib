@@ -245,6 +245,8 @@ int recover_log()
 			char *path = nexttok(NULL);
 			char *metadata = strtok(nexttok(NULL), "\n");
 			undo_touch(path, metadata);
+		} else if (!op) { // TODO: why is op sometimes null?
+			break;
 		}
 	}
 	fclose(fptr);
@@ -309,7 +311,6 @@ int recover()
 
 	recover_log();
 	glibc_remove(undo_log);
-	system("rm logs/*");
 
 	return 0;
 }
