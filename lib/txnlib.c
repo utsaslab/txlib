@@ -37,8 +37,8 @@ int crashed()
 {
 	int real = !cur_txn && (access(undo_log, F_OK) == 0);
 	int virtual = access("logs/crashed", F_OK) == 0;
-	// return virtual;
-	return real; // uncomment for crash.c
+	return virtual;
+	// return real; // uncomment for crash.c
 }
 
 void initialize()
@@ -375,6 +375,24 @@ int open(const char *pathname, int flags, ...)
 	} else {
 		return glibc_open(pathname, flags);
 	}
+}
+
+int mkdir(const char *pathname, mode_t mode)
+{
+	if (!init)
+		initialize();
+
+	recover();
+
+	if (cur_txn) {
+		char entry[4096];
+		char *rp = realpath_missing(pathname);
+		sprintf(entry, "create %s\n", rp);
+		write_to_log(entry);
+		free(rp);
+	}
+
+	return glibc_mkdir(pathname, mode);
 }
 
 int remove(const char *pathname)
