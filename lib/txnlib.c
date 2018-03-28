@@ -37,8 +37,8 @@ int crashed()
 {
 	int real = !cur_txn && (access(undo_log, F_OK) == 0);
 	int virtual = access("logs/crashed", F_OK) == 0;
-	return virtual;
-	// return real; // uncomment for crash.c
+	// return virtual;
+	return real; // uncomment for crash.c
 }
 
 void initialize()
@@ -216,7 +216,7 @@ int undo_touch(const char *path, const char *metadata)
 {
 	char cmd[4096];
 	sprintf(cmd, "touch -r %s %s", metadata, path);
-	system(cmd);
+	// system(cmd);
 	return 0;
 }
 
@@ -265,6 +265,7 @@ int begin_txn(void)
 	if (!cur_txn) { // beginning transaction
 		glibc_mkdir(log_dir, 0777);
 		int fd = glibc_open(undo_log, O_CREAT, 0644);
+		// printf("making undo_log %d %s\n", fd, strerror(errno));
 		close(fd);
 	}
 
@@ -290,7 +291,7 @@ int end_txn(int txn_id)
 	if (!cur_txn) {
 		// commit everything and then delete log
 		sync(); // TODO: just flush touched files?
-		glibc_remove(undo_log);
+		// glibc_remove(undo_log);
 	}
 
 	return 0;
@@ -298,8 +299,12 @@ int end_txn(int txn_id)
 
 int recover()
 {
-	if (!crashed())
+	if (!crashed()) {
+		// printf("DID NOT CRASH\n");
+		// if (access(undo_log, F_OK) == 0)
+		// 	printf("EXPECTED\n");
 		return 0;
+	}
 	glibc_remove("logs/crashed");
 
 	if (cur_txn)
@@ -309,7 +314,9 @@ int recover()
 	if (access(undo_log, F_OK) == -1)
 		return 0;
 
+	// printf("RECOVERING\n");
 	recover_log();
+	// printf("removing log in recover()\n");
 	glibc_remove(undo_log);
 
 	return 0;
@@ -357,9 +364,9 @@ int open(const char *pathname, int flags, ...)
 		close(metadata);
 
 		// copy metadata to backup
-		char cmd[4096];
-		sprintf(cmd, "touch -r %s %s", pathname, metadata_loc);
-		system(cmd);
+		// char cmd[4096];
+		// sprintf(cmd, "touch -r %s %s", pathname, metadata_loc);
+		// system(cmd);
 
 		// create log entry
 		sprintf(entry, "touch %s %s\n", rp, metadata_loc);
