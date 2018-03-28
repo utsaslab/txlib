@@ -57,8 +57,10 @@ void initialize()
 void write_to_log(const char *entry)
 {
 	int fd = glibc_open(undo_log, O_RDWR | O_APPEND);
-	if (fd == -1)
+	if (fd == -1) {
 		printf("Error opening log: %s\n", strerror(errno));
+		exit(1);
+	}
 
 	int written = glibc_write(fd, entry, strlen(entry));
 	if (written != strlen(entry))
@@ -265,7 +267,6 @@ int begin_txn(void)
 	if (!cur_txn) { // beginning transaction
 		glibc_mkdir(log_dir, 0777);
 		int fd = glibc_open(undo_log, O_CREAT, 0644);
-		// printf("making undo_log %d %s\n", fd, strerror(errno));
 		close(fd);
 	}
 
@@ -291,7 +292,7 @@ int end_txn(int txn_id)
 	if (!cur_txn) {
 		// commit everything and then delete log
 		sync(); // TODO: just flush touched files?
-		// glibc_remove(undo_log);
+		// glibc_remove(undo_log); // comment for crash.c (TODO: fix later)
 	}
 
 	return 0;
@@ -299,12 +300,8 @@ int end_txn(int txn_id)
 
 int recover()
 {
-	if (!crashed()) {
-		// printf("DID NOT CRASH\n");
-		// if (access(undo_log, F_OK) == 0)
-		// 	printf("EXPECTED\n");
+	if (!crashed())
 		return 0;
-	}
 	glibc_remove("logs/crashed");
 
 	if (cur_txn)
@@ -314,9 +311,7 @@ int recover()
 	if (access(undo_log, F_OK) == -1)
 		return 0;
 
-	// printf("RECOVERING\n");
 	recover_log();
-	// printf("removing log in recover()\n");
 	glibc_remove(undo_log);
 
 	return 0;

@@ -6,6 +6,7 @@
  */
 
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <math.h>
 #include <pthread.h>
@@ -23,11 +24,12 @@
 #define LAST_OP 4
 #define MIN_OPS 1
 #define MAX_OPS 10
-#define MAX_WAIT_SEC 5
+#define MAX_WAIT_SEC 1
 #define MAX_WAIT_NSEC 999999999
 #define MIN_WRITE_SIZE 2
 #define MAX_WRITE_SIZE 10
-#define MAX_TXNS 100
+#define MIN_TXNS 1
+#define MAX_TXNS 10
 #define MAX_TRUNC 65536
 
 struct operation {
@@ -55,10 +57,8 @@ struct fs_node {
 
 struct operation *ops;
 int ready = 0;
-int done = 0;
 
-int up_to(int max) { return rand() % (max + 1); }
-int between(int min, int max) { return (rand() + min) % (max + 1); }
+int between(int min, int max) { return rand() % (max + 1 - min) + min; }
 
 void append_fs_node(struct fs_node *add, struct fs_node *list)
 {
@@ -184,7 +184,7 @@ void generate_txn(int num_ops, struct fs_node *dirs, struct fs_node *files, int 
                 // create, mkidr, remove -> 10%
                 // ftruncate -> 20%
                 // write -> 50%
-                int roll = up_to(100);
+                int roll = between(0, 100);
                 if (roll < 10)
                         op->op = 0;
                 else if (roll < 20)
@@ -196,11 +196,9 @@ void generate_txn(int num_ops, struct fs_node *dirs, struct fs_node *files, int 
                 else
                         op->op = 4;
 
-                printf("yah: %d\n", op->op);
-
                 // randomly select dir + file
-                int dir = up_to(num_dirs - 1);
-                int file = up_to(num_files - 1);
+                int dir = between(0, num_dirs - 1);
+                int file = between(0, num_files - 1);
                 struct fs_node *any_dir = dirs;
                 struct fs_node *any_file = files;
                 while (dir--)
@@ -214,7 +212,6 @@ void generate_txn(int num_ops, struct fs_node *dirs, struct fs_node *files, int 
                         new_file->next = files;
                         files = new_file;
                         num_files++;
-
                         sprintf(op->path, "%s", new_file->path);
                 } else if (op->op == 1) { // mkdir
                         struct fs_node *new_dir = malloc(sizeof(struct fs_node));
@@ -222,7 +219,6 @@ void generate_txn(int num_ops, struct fs_node *dirs, struct fs_node *files, int 
                         new_dir->next = dirs;
                         dirs = new_dir;
                         num_dirs++;
-
                         sprintf(op->path, "%s", new_dir->path);
                 } else if (op->op == 2) { // remove
                         // TODO: support removing directories
@@ -237,7 +233,7 @@ void generate_txn(int num_ops, struct fs_node *dirs, struct fs_node *files, int 
                         close(n);
                 } else if (op->op == 4) { // ftruncate
                         sprintf(op->path, "%s", any_file->path);
-                        op->count = up_to(MAX_TRUNC);
+                        op->count = between(0, MAX_TRUNC);
                 }
 
                 append_operation(op);
@@ -251,10 +247,13 @@ void generate_txn(int num_ops, struct fs_node *dirs, struct fs_node *files, int 
 
 void perform_ops(const char *folder)
 {
+        printf("===============================\n");
         struct operation *cur = ops;
         while (cur) {
                 char my_path[8192];
                 sprintf(my_path, "%s/%s", folder, cur->path);
+
+                printf("op: %d %s\n", cur->op, my_path);
 
                 if (cur->op == -1) { // end
                         return;
@@ -262,10 +261,7 @@ void perform_ops(const char *folder)
                         int fd = open(my_path, O_CREAT, 0644);
                         close(fd);
                 } else if (cur->op == 1) { // mkdir
-                        int err = mkdir(my_path, 0755);
-                        if (err) {
-                                printf("mkdir err on %s\n", my_path);
-                        }
+                        mkdir(my_path, 0755);
                 } else if (cur->op == 2) { // remove
                         remove(my_path);
                 } else if (cur->op == 3) { // write
@@ -288,15 +284,12 @@ void perform_ops(const char *folder)
 void *work()
 {
         // recover, then compare before/ and txn/
-        // printf("work recover\n");
-        // recover();
+        recover();
 
         // compare txn and before
         if (diff("out/txn", "out/before")) {
                 printf("RECOVERY FAILED!!!\n");
                 exit(1);
-        } else {
-                printf("successful recovery :)\n");
         }
 
         int id = begin_txn();
@@ -306,46 +299,39 @@ void *work()
         if (diff("out/txn", "out/after")) {
                 printf("TRANSACTION FAILED\n");
                 exit(1);
-        } else {
-                printf("successful transaction :)\n");
         }
 }
 
 // repeatedly kill and revive work()
 void phoenix()
 {
+        int done = 0;
         double kill_prob = 100;
         while (!done) {
                 pthread_t tid;
                 pthread_create(&tid, NULL, work, NULL);
 
                 // randomly decide to kill, but make it less likely over time
-                int roll = up_to(100);
+                int roll = between(0, 100);
                 if (roll < kill_prob) {
-                        int sec = up_to(MAX_WAIT_SEC);
-                        int nsec = up_to(MAX_WAIT_NSEC);
+                        int sec = between(0, MAX_WAIT_SEC);
+                        int nsec = between(0, MAX_WAIT_NSEC);
                         struct timespec ts;
                         ts.tv_sec = sec;
                         ts.tv_nsec = nsec;
-                        printf("sleeping for %d\n", sec);
                         nanosleep(&ts, NULL);
-                        printf("burn\n");
                         pthread_cancel(tid);
-                        kill_prob -= 1;
+                        kill_prob -= 10;
                 } else {
                         printf("mercy\n");
-                        kill_prob = 100;
+                        done = 1;
                 }
                 pthread_join(tid, NULL);
-                if (kill_prob == 99)
-                        break;
         }
 }
 
-void test(int max_ops)
+void test(int num_txns)
 {
-        // int num_txns = up_to(MAX_TXNS);
-        int num_txns = 1;
         int next_id = 0;
 
         // initialize with one folder and one file
@@ -365,7 +351,10 @@ void test(int max_ops)
                 // make after/
                 system("cp -r out/before out/after");
                 system("cp -r out/before out/txn");
+
+                printf("performing ops\n");
                 perform_ops("out/after");
+                printf("done performings ops\n");
 
                 phoenix();
         }
@@ -375,12 +364,12 @@ int main()
 {
         // srand(time(NULL)); // comment for determinism
 
-        // tweak these
-        int num_tests = 1;
-        int max_ops = 10;
+        // tweak
+        int num_tests = 2;
 
-        for (int i = 0; i < num_tests; i++)
-                test(max_ops);
-
-        done = 1;
+        for (int i = 0; i < num_tests; i++) {
+                int num_txns = between(MIN_TXNS, MAX_TXNS);
+                printf("test %d: %d txns\n", i, num_txns);
+                test(num_txns);
+        }
 }
