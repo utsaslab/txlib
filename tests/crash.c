@@ -25,7 +25,7 @@
 #define MIN_OPS 1
 #define MAX_OPS 10
 #define MAX_WAIT_SEC 0
-#define MAX_WAIT_NSEC 9999999
+#define MAX_WAIT_NSEC 999999
 #define MIN_WRITE_SIZE 2
 #define MAX_WRITE_SIZE 10
 #define MIN_TXNS 1
@@ -218,9 +218,6 @@ void generate_txn(int num_ops, struct fs_node **dirs, struct fs_node **files, in
                 int file = between(0, num_files - 1);
                 struct fs_node *any_dir = *dirs;
                 struct fs_node *any_file = *files;
-                int reset = 0;
-                if (file == 0)
-                        reset = 1;
                 while (dir--)
                         any_dir = any_dir->next;
                 while (file--)
@@ -251,13 +248,11 @@ void generate_txn(int num_ops, struct fs_node **dirs, struct fs_node **files, in
                         if (any_file->prev)
                                 any_file->prev->next = any_file->next;
                         sprintf(op->path, "%s", any_file->path);
-                        if (reset) {
-                                struct fs_node *to_free = any_file;
+
+                        if (any_file == *files)
                                 (*files) = (*files)->next;
-                                free(to_free);
-                        } else {
-                                free(any_file);
-                        }
+                        free(any_file);
+
                         num_files--;
                 } else if (op->op == 3) { // write
                         sprintf(op->path, "%s", any_file->path);
@@ -381,6 +376,10 @@ void test(int num_txns)
         close(open("out/before/b.txt", O_CREAT, 0644));
         struct fs_node *dirs = malloc(sizeof(struct fs_node));
         struct fs_node *files = malloc(sizeof(struct fs_node));
+        dirs->prev = NULL;
+        dirs->next = NULL;
+        files->prev = NULL;
+        files->next = NULL;
         sprintf(dirs->path, "a");
         sprintf(files->path, "b.txt");
 
