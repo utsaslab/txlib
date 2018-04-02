@@ -23,8 +23,8 @@
 
 #define LAST_OP 4
 #define MIN_OPS 10
-#define MAX_OPS 1000
-#define MAX_WAIT_SEC 1
+#define MAX_OPS 20
+#define MAX_WAIT_SEC 0
 #define MAX_WAIT_NSEC 999999999
 #define MIN_WRITE_SIZE 4096
 #define MAX_WRITE_SIZE 65536
@@ -68,15 +68,15 @@ void make_noise() {
         close(fd);
 }
 
-void append_fs_node(struct fs_node *add, struct fs_node *list)
+void append_fs_node(struct fs_node *add, struct fs_node **list)
 {
-        struct fs_node **last = &list;
+        struct fs_node **last = list;
         while (*last)
                 last = (&(*last)->next);
-        *last = add;
+        (*last) = add;
 }
 
-void diff_recurse(const char *folder, struct fs_node *dir_list, struct fs_node *file_list)
+void diff_recurse(const char *folder, struct fs_node **dir_list, struct fs_node **file_list)
 {
         DIR *cur_dir;
         struct dirent *ent;
@@ -88,6 +88,7 @@ void diff_recurse(const char *folder, struct fs_node *dir_list, struct fs_node *
                 struct fs_node *add;
                 add = malloc(sizeof(struct fs_node));
                 sprintf(add->path, "%s/%s", folder, ent->d_name);
+                add->next = NULL;
 
                 if (ent->d_type == DT_DIR) {
                         append_fs_node(add, dir_list);
@@ -106,7 +107,7 @@ int diff(const char *one, const char *two)
         // find all dirs and files within folder one
         struct fs_node *dirs = NULL;
         struct fs_node *files = NULL;
-        diff_recurse(one, dirs, files);
+        diff_recurse(one, &dirs, &files);
 
         int same = 1;
         // for all dirs and files, match in folder two
@@ -116,18 +117,23 @@ int diff(const char *one, const char *two)
                 char twopath[4096];
                 char subpath[4096];
                 memcpy(subpath, &dit->path[strlen(one) + 1], strlen(dit->path) - strlen(one));
+                subpath[strlen(dit->path) - strlen(one)] = '\0';
                 sprintf(twopath, "%s/%s", two, subpath);
 
                 DIR *dir = opendir(twopath);
-                if (!dir)
+                if (!dir) {
                         same = 0;
-                closedir(dir);
+                        break;
+                } else {
+                        closedir(dir);
+                }
                 dit = dit->next;
         }
         while (fit) {
                 char twopath[4096];
                 char subpath[4096];
                 memcpy(subpath, &fit->path[strlen(one)], strlen(fit->path) - strlen(one));
+                subpath[strlen(fit->path) - strlen(one)] = '\0';
                 sprintf(twopath, "%s%s", two, subpath);
 
                 FILE *f1 = fopen(fit->path, "r");
@@ -142,8 +148,14 @@ int diff(const char *one, const char *two)
                                 same = 0;
                 }
 
-                fclose(f1);
-                fclose(f2);
+                if (f1)
+                        fclose(f1);
+                if (f2)
+                        fclose(f2);
+
+                if (!same)
+                        break;
+
                 fit = fit->next;
         }
 
@@ -169,7 +181,7 @@ void append_operation(struct operation *op)
         *last = op;
 }
 
-void generate_txn(int num_ops, struct fs_node **dirs, struct fs_node **files, int *next_id)
+void generate_txn(int num_ops, struct fs_node **dirs, struct fs_node **files, int *next_id, const char *log)
 {
         // cleanup ops
         struct operation *old = ops;
@@ -203,11 +215,11 @@ void generate_txn(int num_ops, struct fs_node **dirs, struct fs_node **files, in
 
                 // set op probs
                 int roll = between(0, 100);
-                if (roll < 20)
+                if (roll < 15)
                         op->op = 0;
-                else if (roll < 25)
+                else if (roll < 17)
                         op->op = 1;
-                else if (roll < 30)
+                else if (roll < 20)
                         op->op = 2;
                 else if (roll < 80)
                         op->op = 3;
@@ -272,6 +284,13 @@ void generate_txn(int num_ops, struct fs_node **dirs, struct fs_node **files, in
                         op->count = between(0, MAX_TRUNC);
                 }
 
+                char tlog[8192];
+                sprintf(tlog, "%d %s\n", op->op, op->path);
+                int fd = open(log, O_APPEND | O_RDWR);
+                write(fd, tlog, strlen(tlog));
+                close(fd);
+
+                // printf("gen %d %s\n", op->op, op->path);
                 append_operation(op);
         }
 
@@ -372,7 +391,7 @@ void phoenix()
         delete_log();
 }
 
-void test(int num_txns)
+void test(int num_txns, int c)
 {
         int next_id = 0;
 
@@ -392,9 +411,15 @@ void test(int num_txns)
         sprintf(files->path, "b.txt");
 
         for (int i = 0; i < num_txns; i++) {
+
+                char pls[4096];
+                sprintf(pls, "out/gen/%d/txn-%d.log", c, i);
+                int fd = open(pls, O_CREAT, 0644);
+                close(fd);
+
                 int num_ops = between(MIN_OPS, MAX_OPS);
-                printf(" - txn #%d: num_ops -> %d, ", num_txns - i, num_ops);
-                generate_txn(num_ops, &dirs, &files, &next_id);
+                printf(" - txn #%d: num_ops -> %d, ", i, num_ops);
+                generate_txn(num_ops, &dirs, &files, &next_id, pls);
 
                 // initialize after/ and txn/
                 system("rm -rf out/after out/txn");
@@ -419,9 +444,18 @@ int main()
         // tweak
         int num_tests = 10;
 
+        system("rm -rf out/gen");
+        system("mkdir out/gen");
+
+
         for (int i = 0; i < num_tests; i++) {
+
+                char gen[4096];
+                sprintf(gen, "mkdir out/gen/%d", i);
+                system(gen);
+
                 int num_txns = between(MIN_TXNS, MAX_TXNS);
-                printf("========== TEST #%d / %d: %d txns ==========\n", i+1, num_tests, num_txns);
-                test(num_txns);
+                printf("========== TEST #%d: %d txns ==========\n", i, num_txns);
+                test(num_txns, i);
         }
 }
