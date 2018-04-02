@@ -31,6 +31,8 @@ int begin_txn(void);
 int end_txn(int txn_id);
 int recover();
 int rollback();
+void save_log(int keep);
+int delete_log();
 
 // for testing
 void crash();

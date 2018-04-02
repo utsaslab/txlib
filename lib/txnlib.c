@@ -21,13 +21,14 @@ static ssize_t (*glibc_write)(int fd, const void *buf, size_t count);
 static int (*glibc_ftruncate)(int fd, off_t length);
 
 static int init = 0;
-static int next_id; // TODO: prevent overflow
-static int backup_id;
+static int keep_log = 0;
+static int next_id = 0;; // TODO: prevent overflow
+static int backup_id = 0;
 static const char *log_dir = "logs";
 static const char *undo_log = "logs/undo_log";
 static const char *reversed_log = "logs/reversed_log";
-static struct txn *cur_txn;
-static struct file_node *logged;
+static struct txn *cur_txn = NULL;
+static struct file_node *logged = NULL;
 
 // ========== helper methods ==========
 
@@ -148,7 +149,7 @@ void generate_reversed_log()
 		num_lines++;
 
 	// iterate backwards
-	int rev = glibc_open(reversed_log, O_CREAT | O_RDWR, 0644);
+	int rev = glibc_open(reversed_log, O_CREAT | O_RDWR | O_TRUNC, 0644);
 	for (int i = num_lines; i > 0; i--) {
 		rewind(fptr);
 		char entry[4096];
@@ -292,7 +293,10 @@ int end_txn(int txn_id)
 	if (!cur_txn) {
 		// commit everything and then delete log
 		sync(); // TODO: just flush touched files?
-		// glibc_remove(undo_log); // comment for crash.c (TODO: fix later)
+		if (!keep_log) {
+			glibc_remove(undo_log);
+			keep_log = 0;
+		}
 	}
 
 	return 0;
@@ -317,6 +321,10 @@ int recover()
 	return 0;
 }
 
+void save_log(int keep) { keep_log = keep; }
+
+int delete_log() { return glibc_remove(undo_log); }
+
 // ========== glibc wrappers ==========
 
 int open(const char *pathname, int flags, ...)
@@ -337,7 +345,6 @@ int open(const char *pathname, int flags, ...)
 			return glibc_open(pathname, flags);
 		}
 	}
-
 
 	// TODO: save metadata if not yet seen
 	if (!already_logged(pathname)) {
@@ -365,6 +372,9 @@ int open(const char *pathname, int flags, ...)
 
 		// create log entry
 		sprintf(entry, "touch %s %s\n", rp, metadata_loc);
+	} else {
+		printf("undefined open() state: %s creating -> %d, exists -> %d\n", pathname, creating, exists);
+		exit(1);
 	}
 	free(rp);
 	write_to_log(entry);

@@ -1,4 +1,4 @@
-/**
+        /**
  * This test attempts to expose the consistency guarantees txnlib attempts
  * to provide. The 2 relevant "states" in which crashing needs to be tested
  * is before a recovery (in a txn) and during a recovery. Anything else is
@@ -24,8 +24,8 @@
 #define LAST_OP 4
 #define MIN_OPS 1
 #define MAX_OPS 10
-#define MAX_WAIT_SEC 1
-#define MAX_WAIT_NSEC 999999999
+#define MAX_WAIT_SEC 0
+#define MAX_WAIT_NSEC 9999999
 #define MIN_WRITE_SIZE 2
 #define MAX_WRITE_SIZE 10
 #define MIN_TXNS 1
@@ -52,18 +52,18 @@ struct operation {
 
 struct fs_node {
         char path[4096];
+        struct fs_node *prev;
         struct fs_node *next;
 };
 
-struct operation *ops;
+struct operation *ops = NULL;
 int ready = 0;
 
 int between(int min, int max) { return rand() % (max + 1 - min) + min; }
 
 void append_fs_node(struct fs_node *add, struct fs_node *list)
 {
-        struct fs_node **last;
-        last = &list;
+        struct fs_node **last = &list;
         while (*last)
                 last = (&(*last)->next);
         *last = add;
@@ -156,23 +156,34 @@ int diff(const char *one, const char *two)
 
 void append_operation(struct operation *op)
 {
-        struct operation **last;
-        last = &ops;
+        struct operation **last = &ops;
         while (*last)
-                last = (&(*last)->next);
+                last = &((*last)->next);
         *last = op;
 }
 
-void generate_txn(int num_ops, struct fs_node *dirs, struct fs_node *files, int *next_id)
+void generate_txn(int num_ops, struct fs_node **dirs, struct fs_node **files, int *next_id)
 {
+        // cleanup ops
+        struct operation *old = ops;
+        while (old) {
+                struct operation *to_free = old;
+                old = old->next;
+
+                if (to_free->data)
+                        free(to_free->data);
+                free(to_free);
+        }
+        ops = NULL;
+
         int num_dirs = 0;
         int num_files = 0;
-        struct fs_node *temp = dirs;
+        struct fs_node *temp = *dirs;
         while (temp) {
                 num_dirs++;
                 temp = temp->next;
         }
-        temp = files;
+        temp = *files;
         while (temp) {
                 num_files++;
                 temp = temp->next;
@@ -180,6 +191,8 @@ void generate_txn(int num_ops, struct fs_node *dirs, struct fs_node *files, int 
 
         for (int j = 0; j < num_ops; j++) {
                 struct operation *op = malloc(sizeof(struct operation));
+                op->data = NULL;
+                op->next = NULL;
 
                 // create, mkidr, remove -> 10%
                 // ftruncate -> 20%
@@ -196,11 +209,18 @@ void generate_txn(int num_ops, struct fs_node *dirs, struct fs_node *files, int 
                 else
                         op->op = 4;
 
+                // don't delete last file
+                if (op->op == 2 && num_files == 1)
+                        op->op = 0;
+
                 // randomly select dir + file
                 int dir = between(0, num_dirs - 1);
                 int file = between(0, num_files - 1);
-                struct fs_node *any_dir = dirs;
-                struct fs_node *any_file = files;
+                struct fs_node *any_dir = *dirs;
+                struct fs_node *any_file = *files;
+                int reset = 0;
+                if (file == 0)
+                        reset = 1;
                 while (dir--)
                         any_dir = any_dir->next;
                 while (file--)
@@ -209,27 +229,43 @@ void generate_txn(int num_ops, struct fs_node *dirs, struct fs_node *files, int 
                 if (op->op == 0) { // create
                         struct fs_node *new_file = malloc(sizeof(struct fs_node));
                         sprintf(new_file->path, "%s/%d", any_dir->path, (*next_id)++);
-                        new_file->next = files;
-                        files = new_file;
+                        new_file->prev = NULL;
+                        new_file->next = *files;
+                        (*files)->prev = new_file;
+                        (*files) = new_file;
                         num_files++;
                         sprintf(op->path, "%s", new_file->path);
                 } else if (op->op == 1) { // mkdir
                         struct fs_node *new_dir = malloc(sizeof(struct fs_node));
                         sprintf(new_dir->path, "%s/%d", any_dir->path, (*next_id)++);
-                        new_dir->next = dirs;
-                        dirs = new_dir;
+                        new_dir->prev = NULL;
+                        new_dir->next = *dirs;
+                        (*dirs)->prev = new_dir;
+                        (*dirs) = new_dir;
                         num_dirs++;
                         sprintf(op->path, "%s", new_dir->path);
                 } else if (op->op == 2) { // remove
                         // TODO: support removing directories
+                        if (any_file->next)
+                                any_file->next->prev = any_file->prev;
+                        if (any_file->prev)
+                                any_file->prev->next = any_file->next;
                         sprintf(op->path, "%s", any_file->path);
+                        if (reset) {
+                                struct fs_node *to_free = any_file;
+                                (*files) = (*files)->next;
+                                free(to_free);
+                        } else {
+                                free(any_file);
+                        }
+                        num_files--;
                 } else if (op->op == 3) { // write
                         sprintf(op->path, "%s", any_file->path);
                         int size = between(MIN_WRITE_SIZE, MAX_WRITE_SIZE);
                         op->data = malloc(size);
                         op->count = size;
                         int n = open("/dev/random", O_RDONLY);
-                        read(n, op->data, size);
+                        read(n, op->data, size); // TODO: slow, find faster
                         close(n);
                 } else if (op->op == 4) { // ftruncate
                         sprintf(op->path, "%s", any_file->path);
@@ -242,18 +278,18 @@ void generate_txn(int num_ops, struct fs_node *dirs, struct fs_node *files, int 
         // add end_txn operation
         struct operation *end = malloc(sizeof(struct operation));
         end->op = -1;
+        sprintf(end->path, "<END>");
+        end->data = NULL;
+        end->next = NULL;
         append_operation(end);
 }
 
 void perform_ops(const char *folder)
 {
-        printf("===============================\n");
         struct operation *cur = ops;
         while (cur) {
                 char my_path[8192];
                 sprintf(my_path, "%s/%s", folder, cur->path);
-
-                printf("op: %d %s\n", cur->op, my_path);
 
                 if (cur->op == -1) { // end
                         return;
@@ -281,7 +317,7 @@ void perform_ops(const char *folder)
 
 // ========== threads ==========
 
-void *work()
+void work()
 {
         // recover, then compare before/ and txn/
         recover();
@@ -294,6 +330,7 @@ void *work()
 
         int id = begin_txn();
         perform_ops("out/txn");
+        save_log(1);
         end_txn(id);
 
         if (diff("out/txn", "out/after")) {
@@ -308,31 +345,35 @@ void phoenix()
         int done = 0;
         double kill_prob = 100;
         while (!done) {
-                pthread_t tid;
-                pthread_create(&tid, NULL, work, NULL);
-
-                // randomly decide to kill, but make it less likely over time
-                int roll = between(0, 100);
-                if (roll < kill_prob) {
-                        int sec = between(0, MAX_WAIT_SEC);
-                        int nsec = between(0, MAX_WAIT_NSEC);
-                        struct timespec ts;
-                        ts.tv_sec = sec;
-                        ts.tv_nsec = nsec;
-                        nanosleep(&ts, NULL);
-                        pthread_cancel(tid);
-                        kill_prob -= 10;
+                int worker = fork();
+                if (worker == 0) {
+                        work();
+                        _exit(0);
                 } else {
-                        printf("mercy\n");
-                        done = 1;
+                        int roll = between(0, 100);
+                        if (roll < kill_prob) {
+                                int sec = between(0, MAX_WAIT_SEC);
+                                int nsec = between(0, MAX_WAIT_NSEC);
+                                struct timespec ts;
+                                ts.tv_sec = sec;
+                                ts.tv_nsec = nsec;
+                                nanosleep(&ts, NULL);
+                                kill(worker, SIGKILL);
+                                kill_prob -= 0.5;
+                        } else {
+                                done = 1;
+                        }
+                        wait(NULL);
                 }
-                pthread_join(tid, NULL);
         }
+        delete_log();
 }
 
 void test(int num_txns)
 {
         int next_id = 0;
+
+        system("rm -rf out/before out/after out/txn");
 
         // initialize with one folder and one file
         mkdir("out/before", 0755);
@@ -344,32 +385,37 @@ void test(int num_txns)
         sprintf(files->path, "b.txt");
 
         for (int i = 0; i < num_txns; i++) {
+                printf("----- txn #%d -----\n", i);
                 int num_ops = between(MIN_OPS, MAX_OPS);
                 printf("num_ops: %d\n", num_ops);
-                generate_txn(num_ops, dirs, files, &next_id);
+                generate_txn(num_ops, &dirs, &files, &next_id);
 
-                // make after/
+                // initialize after/ and txn/
+                system("rm -rf out/after out/txn");
                 system("cp -r out/before out/after");
                 system("cp -r out/before out/txn");
 
-                printf("performing ops\n");
                 perform_ops("out/after");
-                printf("done performings ops\n");
-
                 phoenix();
+
+                // checkpoint
+                system("rm -rf out/before");
+                system("mv out/after out/before");
         }
 }
 
 int main()
 {
-        // srand(time(NULL)); // comment for determinism
+        time_t tt = time(NULL);
+        printf("seed: %ld\n", tt);
+        srand(tt); // comment for determinism
 
         // tweak
-        int num_tests = 2;
+        int num_tests = 10;
 
         for (int i = 0; i < num_tests; i++) {
                 int num_txns = between(MIN_TXNS, MAX_TXNS);
-                printf("test %d: %d txns\n", i, num_txns);
+                printf("========== TEST #%d: %d txns ==========\n", i, num_txns);
                 test(num_txns);
         }
 }
