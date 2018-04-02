@@ -22,15 +22,16 @@
 #include "txnlib.h"
 
 #define LAST_OP 4
-#define MIN_OPS 1
-#define MAX_OPS 10
-#define MAX_WAIT_SEC 0
-#define MAX_WAIT_NSEC 999999
-#define MIN_WRITE_SIZE 2
-#define MAX_WRITE_SIZE 10
-#define MIN_TXNS 1
-#define MAX_TXNS 10
+#define MIN_OPS 10
+#define MAX_OPS 1000
+#define MAX_WAIT_SEC 1
+#define MAX_WAIT_NSEC 999999999
+#define MIN_WRITE_SIZE 4096
+#define MAX_WRITE_SIZE 65536
+#define MIN_TXNS 5
+#define MAX_TXNS 50
 #define MAX_TRUNC 65536
+#define NOISE_SIZE 1000000
 
 struct operation {
         /**
@@ -57,9 +58,15 @@ struct fs_node {
 };
 
 struct operation *ops = NULL;
-int ready = 0;
+char noise[NOISE_SIZE];
 
 int between(int min, int max) { return rand() % (max + 1 - min) + min; }
+
+void make_noise() {
+        int fd = open("/dev/random", O_RDONLY);
+        read(fd, noise, NOISE_SIZE);
+        close(fd);
+}
 
 void append_fs_node(struct fs_node *add, struct fs_node *list)
 {
@@ -194,13 +201,11 @@ void generate_txn(int num_ops, struct fs_node **dirs, struct fs_node **files, in
                 op->data = NULL;
                 op->next = NULL;
 
-                // create, mkidr, remove -> 10%
-                // ftruncate -> 20%
-                // write -> 50%
+                // set op probs
                 int roll = between(0, 100);
-                if (roll < 10)
+                if (roll < 20)
                         op->op = 0;
-                else if (roll < 20)
+                else if (roll < 25)
                         op->op = 1;
                 else if (roll < 30)
                         op->op = 2;
@@ -259,9 +264,9 @@ void generate_txn(int num_ops, struct fs_node **dirs, struct fs_node **files, in
                         int size = between(MIN_WRITE_SIZE, MAX_WRITE_SIZE);
                         op->data = malloc(size);
                         op->count = size;
-                        int n = open("/dev/random", O_RDONLY);
-                        read(n, op->data, size); // TODO: slow, find faster
-                        close(n);
+
+                        int rand_pos = between(0, NOISE_SIZE - size);
+                        memcpy(op->data, noise + rand_pos, size);
                 } else if (op->op == 4) { // ftruncate
                         sprintf(op->path, "%s", any_file->path);
                         op->count = between(0, MAX_TRUNC);
@@ -339,6 +344,7 @@ void phoenix()
 {
         int done = 0;
         double kill_prob = 100;
+        int crashes = 0;
         while (!done) {
                 int worker = fork();
                 if (worker == 0) {
@@ -354,9 +360,11 @@ void phoenix()
                                 ts.tv_nsec = nsec;
                                 nanosleep(&ts, NULL);
                                 kill(worker, SIGKILL);
-                                kill_prob -= 0.5;
+                                kill_prob -= 0.01;
+                                crashes++;
                         } else {
                                 done = 1;
+                                printf("crashes -> %d\n", crashes);
                         }
                         wait(NULL);
                 }
@@ -384,9 +392,8 @@ void test(int num_txns)
         sprintf(files->path, "b.txt");
 
         for (int i = 0; i < num_txns; i++) {
-                printf("----- txn #%d -----\n", i);
                 int num_ops = between(MIN_OPS, MAX_OPS);
-                printf("num_ops: %d\n", num_ops);
+                printf(" - txn #%d: num_ops -> %d, ", num_txns - i, num_ops);
                 generate_txn(num_ops, &dirs, &files, &next_id);
 
                 // initialize after/ and txn/
@@ -414,7 +421,7 @@ int main()
 
         for (int i = 0; i < num_tests; i++) {
                 int num_txns = between(MIN_TXNS, MAX_TXNS);
-                printf("========== TEST #%d: %d txns ==========\n", i, num_txns);
+                printf("========== TEST #%d / %d: %d txns ==========\n", i+1, num_tests, num_txns);
                 test(num_txns);
         }
 }
