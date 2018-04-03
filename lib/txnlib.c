@@ -516,11 +516,17 @@ int ftruncate(int fd, off_t length)
 		lseek(fd, 0, SEEK_SET);
 		glibc_read(fd, trunk, length);
 
-		remove(path);
-		int fd1 = open(path, O_CREAT | O_RDWR, st.st_mode);
+		// need to atomically replace original file
+		char temp[4096];
+		sprintf(temp, "%s.trunc", path);
+		int fd1 = open(temp, O_CREAT | O_RDWR, st.st_mode);
 		write(fd1, trunk, length);
-		dup2(fd1, fd);
 		close(fd1);
+		rename(temp, path);
+
+		int fd2 = open(path, O_RDWR);
+		dup2(fd2, fd);
+		close(fd2);
 
 		free(trunk);
 		free(path);
