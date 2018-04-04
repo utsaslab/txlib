@@ -12,6 +12,12 @@
 
 int main(int argc, char **argv)
 {
+        /**
+         * Relevant metadata includes:
+         *   mode
+         *   user + group
+         *   access/modify/change time
+         */
         int fd = open("out/test5.out", O_CREAT | O_RDWR, 0777);
         struct stat old;
         fstat(fd, &old);

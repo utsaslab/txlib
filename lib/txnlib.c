@@ -7,7 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/types.h>
+#include <utime.h>
 #include "txnlib.h"
 
 #include <unistd.h>
@@ -230,10 +232,50 @@ int undo_write(const char *path, int pos, int range, int prev_size, const char *
 
 int undo_touch(const char *path, const char *metadata)
 {
-	// TODO: restore metadata properly
-	char cmd[4096];
-	sprintf(cmd, "touch -r %s %s", metadata, path);
-	// system(cmd);
+	// mode -> user -> group -> atim -> mtim -> ctim
+	FILE *md = fopen(metadata, "r");
+	int size = 4096;
+	char buf[size];
+	fgets(buf, size, md);
+	int mode = atoi(nexttok(buf));
+	fgets(buf, size, md);
+	int user = atoi(nexttok(buf));
+	fgets(buf, size, md);
+	int group = atoi(nexttok(buf));
+	fgets(buf, size, md);
+	int atim_sec = atoi(nexttok(buf));
+	int atim_usec = atoi(nexttok(NULL)) % 1000;
+	fgets(buf, size, md);
+	int mtim_sec = atoi(nexttok(buf));
+	int mtim_usec = atoi(nexttok(NULL)) % 1000;
+
+	int err = chmod(path, mode);
+	if (err) {
+		// printf("Error restoring mode in undo_touch(). (%s)\n", strerror(errno));
+		return -1;
+	}
+	err = chown(path, user, group);
+	if (err) {
+		printf("Error chowning in undo_touch(). (%s)\n", strerror(errno));
+		return -1;
+	}
+
+	struct timeval tvs[2];
+	struct timeval access;
+	struct timeval modify;
+	access.tv_sec = atim_sec;
+	access.tv_usec = atim_usec;
+	modify.tv_sec = mtim_sec;
+	modify.tv_usec = mtim_usec;
+	tvs[0] = access;
+	tvs[1] = modify;
+
+	err = utimes(path, tvs);
+	if (err) {
+		printf("Error restoring utimes in undo_touch(). (%s)\n", strerror(errno));
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -375,11 +417,6 @@ int open(const char *pathname, int flags, ...)
 		}
 	}
 
-	// TODO: save metadata if not yet seen
-	if (!already_logged(pathname)) {
-		add_to_logged(pathname);
-	}
-
 	char entry[4096];
 	char *rp = realpath_missing(pathname);
 	// check if file already exists (don't infer from flags)
@@ -391,14 +428,15 @@ int open(const char *pathname, int flags, ...)
 		// create metadata file backup
 		char metadata_loc[4096];
 		sprintf(metadata_loc, "%s/%d.meta", log_dir, backup_id++);
-		int metadata = glibc_open(metadata_loc, O_CREAT | O_EXCL, 0644);
-		close(metadata);
 
-		// TODO: properly save relevant metadata
-		// copy metadata to backup
-		// char cmd[4096];
-		// sprintf(cmd, "touch -r %s %s", pathname, metadata_loc);
-		// system(cmd);
+		struct stat md;
+		stat(pathname, &md);
+		char relevant[4096];
+		sprintf(relevant, "%d\n%d\n%d\n%ld %ld\n%ld %ld\n", md.st_mode, md.st_uid, md.st_gid, md.st_atim.tv_sec, md.st_atim.tv_nsec, md.st_mtim.tv_sec, md.st_mtim.tv_nsec);
+
+		int metadata = glibc_open(metadata_loc, O_CREAT | O_RDWR | O_TRUNC, 0644);
+		glibc_write(metadata, relevant, strlen(relevant));
+		close(metadata);
 
 		// create log entry
 		sprintf(entry, "touch %s %s\n", rp, metadata_loc);
