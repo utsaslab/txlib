@@ -44,8 +44,7 @@ int crashed()
 
 void initialize()
 {
-        // expose glibc_open (TODO: should I initialize/do this differently?)
-	glibc_open = dlsym(RTLD_NEXT, "open"); // TODO: what is RTLD_NEXT?
+	glibc_open = dlsym(RTLD_NEXT, "open");
 	glibc_mkdir = dlsym(RTLD_NEXT, "mkdir");
 	glibc_remove = dlsym(RTLD_NEXT, "remove");
 	glibc_read = dlsym(RTLD_NEXT, "read");
@@ -83,9 +82,9 @@ char *realpath_missing(const char *path)
 {
 	int size = 4096;
 	char *rp = calloc(size, 1);
-	char command[4096]; // TODO: arbitrary
-
+	char command[4096];
 	sprintf(command, "realpath -m %s", path);
+
 	FILE *out = popen(command, "r");
 	fgets(rp, size, out);
 	pclose(out);
@@ -110,8 +109,7 @@ void add_to_logged(const char *name)
 	struct file_node *fn = malloc(sizeof(struct file_node));
 	sprintf(fn->name, "%s", rp);
 	free(rp);
-	if (logged)
-		fn->next = logged;
+	fn->next = logged;
 	logged = fn;
 }
 
@@ -131,10 +129,7 @@ int already_logged(const char *name)
 }
 
 // custom implementation of parsing undo logs
-char *nexttok(char *line)
-{
-	return strtok(line, line ? " \n" : " ");
-}
+char *nexttok(char *line) { return strtok(line, line ? " \n" : " "); }
 
 // for some reason, there is no easy way of doing this
 // I tried calling system("tac ..."), but that freezes for some reason
@@ -187,8 +182,7 @@ void copy(const char *dest, const char *src)
 
 void crash()
 {
-	int fd = glibc_open("logs/crashed", O_CREAT, 0644);
-	close(fd);
+	close(glibc_open("logs/crashed", O_CREAT, 0644));
 	cur_txn = NULL;
 	logged = NULL;
 }
@@ -216,30 +210,27 @@ int undo_write(const char *path, int pos, int range, int prev_size, const char *
 	close(bup);
 
 	int dirty = glibc_open(path, O_RDWR);
-	if (dirty == -1)
+	if (dirty == -1) // okay if file doesn't exist bc may have crashed during recovery
 		return -1;
-	// if (dirty == -1) {
-	// 	printf("dirt %s %s\n", path, strerror(errno));
-	// 	exit(1);
-	// }
 	lseek(dirty, pos, SEEK_SET);
 	ssize_t restored = glibc_write(dirty, saved, range);
 	glibc_ftruncate(dirty, prev_size);
 	close(dirty);
 	free(saved);
 
-	// ok to exclude bc idempotent?
-	// if (filesize(path) != prev_size || restored != range) {
-	// 	printf("Error in undo_write. (expected: %d, backup: %zd, restored %zd)\n",
-	// 		range, bupped, restored);
-	// 	return -1;
-	// }
+	// this is okay bc still idempotent
+	if (filesize(path) != prev_size || restored != range) {
+		// printf("Error in undo_write. (expected: %d, backup: %zd, restored %zd)\n",
+		// 	range, bupped, restored);
+		return -1;
+	}
 
 	return 0;
 }
 
 int undo_touch(const char *path, const char *metadata)
 {
+	// TODO: restore metadata properly
 	char cmd[4096];
 	sprintf(cmd, "touch -r %s %s", metadata, path);
 	// system(cmd);
@@ -250,8 +241,9 @@ int recover_log()
 {
 	generate_reversed_log();
 	FILE *fptr = fopen(reversed_log, "r");
-	char entry[4096];
-	while (fgets(entry, 4096, fptr)) {
+	int length = 4096;
+	char entry[length];
+	while (fgets(entry, length, fptr)) {
 		char *op = nexttok(entry);
 		if (strcmp("create", op) == 0) {
 			char *path = strtok(nexttok(NULL), "\n"); // trim newline
@@ -272,6 +264,7 @@ int recover_log()
 			char *metadata = strtok(nexttok(NULL), "\n");
 			undo_touch(path, metadata);
 		} else if (!op) { // TODO: why is op sometimes null?
+			printf("Operation is null in recover_log().\n");
 			break;
 		}
 	}
@@ -289,8 +282,16 @@ int begin_txn(void)
 	recover();
 
 	if (!cur_txn) { // beginning transaction
-		glibc_mkdir(log_dir, 0777);
+		int err = glibc_mkdir(log_dir, 0777);
+		if (err && errno != EEXIST) {
+			printf("Unable to make log directory at %s: (%s)\n", log_dir, strerror(errno));
+			return -1;
+		}
 		int fd = glibc_open(undo_log, O_CREAT | O_EXCL, 0644);
+		if (fd == -1) {
+			printf("Unable to make undo log at %s: (%s)\n", undo_log, strerror(errno));
+			return -1;
+		}
 		close(fd);
 	}
 
@@ -304,6 +305,7 @@ int begin_txn(void)
 
 int end_txn(int txn_id)
 {
+	// TODO: should this be allowed?
 	if (txn_id != cur_txn->id) {
 		printf("attempting to end (%d) but current transaction is (%d)\n", txn_id, cur_txn->id);
 		return -1;
@@ -315,7 +317,7 @@ int end_txn(int txn_id)
 
 	if (!cur_txn) {
 		// commit everything and then delete log
-		sync(); // TODO: just flush touched files?
+		sync();
 		if (!keep_log) {
 			glibc_remove(undo_log);
 			keep_log = 0;
@@ -331,15 +333,19 @@ int recover()
 		return 0;
 	glibc_remove("logs/crashed");
 
-	if (cur_txn)
-		return 0;
+	if (cur_txn) {
+		printf("Crash detected within transaction. Undefined state.\n");
+		return -1;
+	}
 
 	// check for existence of undo_log
-	if (access(undo_log, F_OK) == -1)
-		return 0;
+	if (access(undo_log, F_OK) == -1) {
+		printf("Crash detected but cannot find undo log at %s\n", undo_log);
+		return -1;
+	}
 
 	recover_log();
-	glibc_remove(undo_log);
+	glibc_remove(undo_log); // existence of undo log indicates crash
 
 	return 0;
 }
@@ -388,6 +394,7 @@ int open(const char *pathname, int flags, ...)
 		int metadata = glibc_open(metadata_loc, O_CREAT | O_EXCL, 0644);
 		close(metadata);
 
+		// TODO: properly save relevant metadata
 		// copy metadata to backup
 		// char cmd[4096];
 		// sprintf(cmd, "touch -r %s %s", pathname, metadata_loc);

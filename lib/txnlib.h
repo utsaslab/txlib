@@ -30,7 +30,7 @@ struct log_node {
 int begin_txn(void);
 int end_txn(int txn_id);
 int recover();
-int rollback();
+// int rollback();
 void save_log(int keep);
 int delete_log();
 
@@ -43,19 +43,19 @@ void crash();
 
 // create
 int open(const char *pathname, int flags, ... /* mode_t mode */);
-int creat(const char *pathname, mode_t mode);
-int openat(int dirfd, const char *pathname, int flags, ... /* mode_t mode */);
+// int creat(const char *pathname, mode_t mode);
+// int openat(int dirfd, const char *pathname, int flags, ... /* mode_t mode */);
 int mkdir(const char *pathname, mode_t mode);
 
 // remove
 int remove(const char *pathname);
-int unlink(const char *pathname);
-int rmdir(const char *pathname);
-int unlinkat(int dirfd, const char *pathname, int flags);
+// int unlink(const char *pathname);
+// int rmdir(const char *pathname);
+// int unlinkat(int dirfd, const char *pathname, int flags);
 
 // within file
 ssize_t write(int fd, const void *buf, size_t count);
 int ftruncate(int fd, off_t length);
-int access(const char *pathname, int mode);
+// int access(const char *pathname, int mode);
 
 #endif // TXNLIB_H_
