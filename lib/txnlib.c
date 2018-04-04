@@ -442,7 +442,7 @@ int open(const char *pathname, int flags, ...)
 		sprintf(entry, "touch %s %s\n", rp, metadata_loc);
 	} else {
 		printf("undefined open() state: %s creating -> %d, exists -> %d\n", pathname, creating, exists);
-		exit(1);
+		// exit(1);
 	}
 	free(rp);
 	write_to_log(entry);

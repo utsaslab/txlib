@@ -154,8 +154,10 @@ int diff(const char *one, const char *two)
                 subpath[strlen(fit->path) - strlen(one)] = '\0';
                 sprintf(twopath, "%s%s", two, subpath);
 
-                if (access(fit->path, F_OK) == -1 || access(twopath, F_OK) == -1 || !equal_files(fit->path, twopath))
+                if (access(fit->path, F_OK) == -1 || access(twopath, F_OK) == -1 || !equal_files(fit->path, twopath)) {
+                        printf("file mismatch: %s\n", twopath);
                         same = 0;
+                }
 
                 fit = fit->next;
         }
@@ -222,7 +224,7 @@ void generate_txn(int num_ops, struct fs_node **dirs, struct fs_node **files, in
                         op->op = 1;
                 else if (roll < 20)
                         op->op = 2;
-                else if (roll < 30)
+                else if (roll < 70)
                         op->op = 3;
                 else
                         op->op = 4;
@@ -315,11 +317,19 @@ void perform_ops(const char *folder)
                         return;
                 } else if (cur->op == 0) { // create
                         int fd = open(my_path, O_CREAT, 0644);
+                        if (fd == -1) {
+                                printf("create() op failed: %s\n", strerror(errno));
+                                exit(66);
+                        }
                         close(fd);
                 } else if (cur->op == 1) { // mkdir
                         mkdir(my_path, 0755);
                 } else if (cur->op == 2) { // remove
-                        remove(my_path);
+                        int err = remove(my_path);
+                        if (err) {
+                                printf("remove() op failed: %s\n", strerror(errno));
+                                exit(55);
+                        }
                 } else if (cur->op == 3) { // write
                         int fd = open(my_path, O_RDWR);
                         write(fd, cur->data, cur->count);
