@@ -23,8 +23,8 @@
 
 #define LAST_OP 4
 #define MIN_OPS 10
-#define MAX_OPS 20
-#define MAX_WAIT_SEC 0
+#define MAX_OPS 50
+#define MAX_WAIT_SEC 1
 #define MAX_WAIT_NSEC 999999999
 #define MIN_WRITE_SIZE 4096
 #define MAX_WRITE_SIZE 65536
@@ -62,7 +62,8 @@ char noise[NOISE_SIZE];
 
 int between(int min, int max) { return rand() % (max + 1 - min) + min; }
 
-void make_noise() {
+void make_noise()
+{
         int fd = open("/dev/random", O_RDONLY);
         read(fd, noise, NOISE_SIZE);
         close(fd);
@@ -122,6 +123,7 @@ int diff(const char *one, const char *two)
 
                 DIR *dir = opendir(twopath);
                 if (!dir) {
+                        printf("missing dir %s\n", twopath);
                         same = 0;
                         break;
                 } else {
@@ -140,12 +142,16 @@ int diff(const char *one, const char *two)
                 FILE *f2 = fopen(twopath, "r");
                 char ch1, ch2;
 
-                if (!f1 || !f2)
+                if (!f1 || !f2) {
+                        if (!f1)
+                                printf("missing file %s\n", fit->path);
+                        if (!f2)
+                                printf("missing file %s\n", twopath);
                         same = 0;
-
-                while ( ((ch1 = fgetc(f1)) != EOF) && ((ch2 = fgetc(f2)) != EOF) ) {
-                        if (ch1 != ch2)
-                                same = 0;
+                } else {
+                        while ( ((ch1 = fgetc(f1)) != EOF) && ((ch2 = fgetc(f2)) != EOF) )
+                                if (ch1 != ch2)
+                                        same = 0;
                 }
 
                 if (f1)
@@ -221,7 +227,7 @@ void generate_txn(int num_ops, struct fs_node **dirs, struct fs_node **files, in
                         op->op = 1;
                 else if (roll < 20)
                         op->op = 2;
-                else if (roll < 80)
+                else if (roll < 30)
                         op->op = 3;
                 else
                         op->op = 4;
@@ -342,9 +348,9 @@ void work()
         recover();
 
         // compare txn and before
-        if (diff("out/txn", "out/before")) {
+        if (diff("out/txn", "out/before") || diff("out/before", "out/txn")) {
                 printf("RECOVERY FAILED!!!\n");
-                exit(1);
+                exit(31);
         }
 
         int id = begin_txn();
@@ -352,9 +358,9 @@ void work()
         save_log(1);
         end_txn(id);
 
-        if (diff("out/txn", "out/after")) {
+        if (diff("out/txn", "out/after") || diff("out/after", "out/txn")) {
                 printf("TRANSACTION FAILED\n");
-                exit(1);
+                exit(31);
         }
 }
 
@@ -385,7 +391,14 @@ void phoenix()
                                 done = 1;
                                 printf("crashes -> %d\n", crashes);
                         }
-                        wait(NULL);
+                        // wait(NULL);
+                        int status;
+                        waitpid(worker, &status, 0);
+                        int result = WEXITSTATUS(status);
+                        if (result) {
+                                printf("worker() error: %d\n", result);
+                                exit(62);
+                        }
                 }
         }
         delete_log();
@@ -411,14 +424,17 @@ void test(int num_txns, int c)
         sprintf(files->path, "b.txt");
 
         for (int i = 0; i < num_txns; i++) {
-
+                // logging
                 char pls[4096];
                 sprintf(pls, "out/gen/%d/txn-%d.log", c, i);
                 int fd = open(pls, O_CREAT, 0644);
                 close(fd);
 
+                make_noise();
+
                 int num_ops = between(MIN_OPS, MAX_OPS);
                 printf(" - txn #%d: num_ops -> %d, ", i, num_ops);
+		fflush(stdout);
                 generate_txn(num_ops, &dirs, &files, &next_id, pls);
 
                 // initialize after/ and txn/
@@ -442,14 +458,13 @@ int main()
         srand(tt); // comment for determinism
 
         // tweak
-        int num_tests = 10;
+        int num_tests = 50;
 
+        // for logging
         system("rm -rf out/gen");
         system("mkdir out/gen");
 
-
         for (int i = 0; i < num_tests; i++) {
-
                 char gen[4096];
                 sprintf(gen, "mkdir out/gen/%d", i);
                 system(gen);

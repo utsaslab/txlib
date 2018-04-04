@@ -170,6 +170,19 @@ off_t filesize(const char *path)
 		return -1;
 }
 
+void copy(const char *dest, const char *src)
+{
+	FILE *d = fopen(dest, "w");
+	FILE *s = fopen(src, "r");
+	char c;
+
+	while ( (c = fgetc(s)) != EOF )
+		fputc(c, d);
+
+	fclose(d);
+	fclose(s);
+}
+
 // ========== testing ==========
 
 void crash()
@@ -189,7 +202,10 @@ int undo_create(const char *path)
 
 int undo_remove(const char *path, const char *backup)
 {
-	return rename(backup, path);
+	char cp[4096];
+	sprintf(cp, "%s.copy", backup);
+	copy(cp, backup);
+	return rename(cp, path);
 }
 
 int undo_write(const char *path, int pos, int range, int prev_size, const char *backup)
@@ -516,17 +532,11 @@ int ftruncate(int fd, off_t length)
 		lseek(fd, 0, SEEK_SET);
 		glibc_read(fd, trunk, length);
 
-		// need to atomically replace original file
-		char temp[4096];
-		sprintf(temp, "%s.trunc", path);
-		int fd1 = open(temp, O_CREAT | O_RDWR, st.st_mode);
+		remove(path);
+		int fd1 = open(path, O_CREAT | O_RDWR, st.st_mode);
 		write(fd1, trunk, length);
+		dup2(fd1, fd);
 		close(fd1);
-		rename(temp, path);
-
-		int fd2 = open(path, O_RDWR);
-		dup2(fd2, fd);
-		close(fd2);
 
 		free(trunk);
 		free(path);
