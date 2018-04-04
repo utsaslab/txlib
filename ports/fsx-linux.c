@@ -111,6 +111,7 @@ FILE *	fsxlogf = NULL;
 int badoff = -1;
 int closeopen = 0;
 
+unsigned long op = -1; // txnlib only supports {1, 3}
 
 void
 prt(char *fmt, ...)
@@ -702,7 +703,6 @@ test(void)
 	unsigned long	size = maxoplen;
 	unsigned long	rv = random();
 	// unsigned long	op = rv % (3 + !lite + mapped_writes);
-	unsigned long	op = 1; // txnlib only supports 1 and 3
 
         /* turn off the map read if necessary */
 
@@ -1054,14 +1054,17 @@ main(int argc, char **argv)
 	} else
 		check_trunc_hack();
 
+	// WRITE
+	printf("++++++++++++++++++++\n");
+	printf("running write (op = 1) tests...\n");
+	op = 1;
+	int count = numops;
 	int id = begin_txn();
-
-	while (numops == -1 || numops--) {
+	while (count == -1 || count--) {
 		test();
-		if (numops % 100 == 0)
-			printf("%ld\n", numops);
+		if (count % 1000 == 0)
+			printf("%d\n", count);
 	}
-
 	crash();
 	recover();
 
@@ -1069,7 +1072,29 @@ main(int argc, char **argv)
 	struct stat st;
 	fstat(check, &st);
 	if (st.st_size == 0)
-		prt("File successfully restored after stress test!\n");
+		prt("File successfully restored after write stress test!\n");
+	else
+		prt("Failed to restore file. Size is %d. (should be 0)\n", st.st_size);
+	close(check);
+
+	// FTRUNCATE
+	printf("++++++++++++++++++++\n");
+	printf("running ftruncate (op = 3) tests...\n");
+	op = 3;
+	count = numops;
+	id = begin_txn();
+	while (count == -1 || count--) {
+		test();
+		if (count % 1000 == 0)
+			printf("%d\n", count);
+	}
+	crash();
+	recover();
+
+	check = open(fname, O_RDWR);
+	fstat(check, &st);
+	if (st.st_size == 0)
+		prt("File successfully restored after ftruncate stress test!\n");
 	else
 		prt("Failed to restore file. Size is %d. (should be 0)\n", st.st_size);
 	close(check);
