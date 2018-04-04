@@ -77,6 +77,23 @@ void append_fs_node(struct fs_node *add, struct fs_node **list)
         (*last) = add;
 }
 
+int equal_files(const char *one, const char *two)
+{
+        char md5one[32]; // size of md5 hash
+        char md5two[32];
+        char cmd1[1024];
+        char cmd2[1024];
+        sprintf(cmd1, "md5sum %s", one);
+        sprintf(cmd2, "md5sum %s", two);
+        FILE *f1 = popen(cmd1, "r");
+        FILE *f2 = popen(cmd2, "r");
+        fgets(md5one, 32, f1);
+        fgets(md5two, 32, f2);
+        pclose(f1);
+        pclose(f2);
+        return strncmp(md5one, md5two, 32) == 0;
+}
+
 void diff_recurse(const char *folder, struct fs_node **dir_list, struct fs_node **file_list)
 {
         DIR *cur_dir;
@@ -114,7 +131,7 @@ int diff(const char *one, const char *two)
         // for all dirs and files, match in folder two
         struct fs_node *dit = dirs;
         struct fs_node *fit = files;
-        while (dit) {
+        while (same && dit) {
                 char twopath[4096];
                 char subpath[4096];
                 memcpy(subpath, &dit->path[strlen(one) + 1], strlen(dit->path) - strlen(one));
@@ -125,42 +142,20 @@ int diff(const char *one, const char *two)
                 if (!dir) {
                         printf("missing dir %s\n", twopath);
                         same = 0;
-                        break;
                 } else {
                         closedir(dir);
                 }
                 dit = dit->next;
         }
-        while (fit) {
+        while (same && fit) {
                 char twopath[4096];
                 char subpath[4096];
                 memcpy(subpath, &fit->path[strlen(one)], strlen(fit->path) - strlen(one));
                 subpath[strlen(fit->path) - strlen(one)] = '\0';
                 sprintf(twopath, "%s%s", two, subpath);
 
-                FILE *f1 = fopen(fit->path, "r");
-                FILE *f2 = fopen(twopath, "r");
-                char ch1, ch2;
-
-                if (!f1 || !f2) {
-                        if (!f1)
-                                printf("missing file %s\n", fit->path);
-                        if (!f2)
-                                printf("missing file %s\n", twopath);
+                if (access(fit->path, F_OK) == -1 || access(twopath, F_OK) == -1 || !equal_files(fit->path, twopath))
                         same = 0;
-                } else {
-                        while ( ((ch1 = fgetc(f1)) != EOF) && ((ch2 = fgetc(f2)) != EOF) )
-                                if (ch1 != ch2)
-                                        same = 0;
-                }
-
-                if (f1)
-                        fclose(f1);
-                if (f2)
-                        fclose(f2);
-
-                if (!same)
-                        break;
 
                 fit = fit->next;
         }
@@ -385,7 +380,7 @@ void phoenix()
                                 ts.tv_nsec = nsec;
                                 nanosleep(&ts, NULL);
                                 kill(worker, SIGKILL);
-                                kill_prob -= 0.01;
+                                kill_prob -= 0.05;
                                 crashes++;
                         } else {
                                 done = 1;
