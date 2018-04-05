@@ -77,103 +77,22 @@ void append_fs_node(struct fs_node *add, struct fs_node **list)
         (*last) = add;
 }
 
-int equal_files(const char *one, const char *two)
-{
-        char md5one[32]; // size of md5 hash
-        char md5two[32];
-        char cmd1[1024];
-        char cmd2[1024];
-        sprintf(cmd1, "md5sum %s", one);
-        sprintf(cmd2, "md5sum %s", two);
-        FILE *f1 = popen(cmd1, "r");
-        FILE *f2 = popen(cmd2, "r");
-        fgets(md5one, 32, f1);
-        fgets(md5two, 32, f2);
-        pclose(f1);
-        pclose(f2);
-        return strncmp(md5one, md5two, 32) == 0;
-}
-
-void diff_recurse(const char *folder, struct fs_node **dir_list, struct fs_node **file_list)
-{
-        DIR *cur_dir;
-        struct dirent *ent;
-        cur_dir = opendir(folder);
-        while ((ent = readdir(cur_dir)) != NULL) {
-                if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, ".."))
-                        continue;
-
-                struct fs_node *add;
-                add = malloc(sizeof(struct fs_node));
-                sprintf(add->path, "%s/%s", folder, ent->d_name);
-                add->next = NULL;
-
-                if (ent->d_type == DT_DIR) {
-                        append_fs_node(add, dir_list);
-                        diff_recurse(add->path, dir_list, file_list);
-                } else if (ent->d_type == DT_REG) {
-                        append_fs_node(add, file_list);
-                } else {
-                        printf("UNSUPPORTED FILE TYPE: %d", ent->d_type);
-                }
-        }
-}
-
 // compares 2 folders; return 0 if same, 1 if different
 int diff(const char *one, const char *two)
 {
-        // find all dirs and files within folder one
-        struct fs_node *dirs = NULL;
-        struct fs_node *files = NULL;
-        diff_recurse(one, &dirs, &files);
+        set_bypass(1);
 
-        int same = 1;
-        // for all dirs and files, match in folder two
-        struct fs_node *dit = dirs;
-        struct fs_node *fit = files;
-        while (same && dit) {
-                char twopath[4096];
-                char subpath[4096];
-                memcpy(subpath, &dit->path[strlen(one) + 1], strlen(dit->path) - strlen(one));
-                subpath[strlen(dit->path) - strlen(one)] = '\0';
-                sprintf(twopath, "%s/%s", two, subpath);
+        char cmd[4096];
+        sprintf(cmd, "diff -r %s %s", one, two);
+        FILE *fp = popen(cmd, "r");
+        char output[4096];
+        memset(output, '\0', 4096);
+        fgets(output, 4096 - 1, fp);
+        pclose(fp);
 
-                DIR *dir = opendir(twopath);
-                if (!dir) {
-                        printf("missing dir %s\n", twopath);
-                        same = 0;
-                } else {
-                        closedir(dir);
-                }
-                dit = dit->next;
-        }
-        while (same && fit) {
-                char twopath[4096];
-                char subpath[4096];
-                memcpy(subpath, &fit->path[strlen(one)], strlen(fit->path) - strlen(one));
-                subpath[strlen(fit->path) - strlen(one)] = '\0';
-                sprintf(twopath, "%s%s", two, subpath);
+        set_bypass(0);
 
-                if (access(fit->path, F_OK) == -1 || access(twopath, F_OK) == -1 || !equal_files(fit->path, twopath)) {
-                        printf("file mismatch: %s\n", twopath);
-                        same = 0;
-                }
-
-                fit = fit->next;
-        }
-
-        while (dirs) {
-                struct fs_node *to_free = dirs;
-                dirs = dirs->next;
-                free(to_free);
-        }
-        while (files) {
-                struct fs_node *to_free = files;
-                files = files->next;
-                free(to_free);
-        }
-
-        return !same;
+        return strlen(output);
 }
 
 void append_operation(struct operation *op)
@@ -353,7 +272,7 @@ void work()
         recover();
 
         // compare txn and before
-        if (diff("out/txn", "out/before") || diff("out/before", "out/txn")) {
+        if (diff("out/txn", "out/before")) {
                 printf("RECOVERY FAILED!!!\n");
                 exit(31);
         }
@@ -363,7 +282,7 @@ void work()
         save_log(1);
         end_txn(id);
 
-        if (diff("out/txn", "out/after") || diff("out/after", "out/txn")) {
+        if (diff("out/txn", "out/after")) {
                 printf("TRANSACTION FAILED\n");
                 exit(31);
         }

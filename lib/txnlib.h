@@ -33,6 +33,7 @@ int recover();
 // int rollback();
 void save_log(int keep);
 int delete_log();
+void set_bypass(int set);
 
 // for testing
 void crash();

@@ -29,20 +29,13 @@ static int backup_id = 0;
 static const char *log_dir = "logs";
 static const char *undo_log = "logs/undo_log";
 static const char *reversed_log = "logs/reversed_log";
+static const char *bypass = "logs/bypass"; // prevent issues when using system()
 static struct txn *cur_txn = NULL;
 static struct file_node *logged = NULL;
 
 // ========== helper methods ==========
 
-// TODO: there is some weird stuff regarding linking and system() and global
-//       variables that I cannot figure out, so we'll do this for now
-int crashed()
-{
-	int real = !cur_txn && (access(undo_log, F_OK) == 0);
-	int virtual = access("logs/crashed", F_OK) == 0;
-	// return virtual;
-	return real; // uncomment for crash.c
-}
+int crashed() { return !cur_txn && (access(undo_log, F_OK) == 0); }
 
 void initialize()
 {
@@ -373,7 +366,9 @@ int recover()
 {
 	if (!crashed())
 		return 0;
-	glibc_remove("logs/crashed");
+
+	if ((access(bypass, F_OK) == 0))
+		return 0;
 
 	if (cur_txn) {
 		printf("Crash detected within transaction. Undefined state.\n");
@@ -395,6 +390,19 @@ int recover()
 void save_log(int keep) { keep_log = keep; }
 
 int delete_log() { return glibc_remove(undo_log); }
+
+void set_bypass(int set)
+{
+	if (!init)
+		initialize();
+
+	if (set) {
+		glibc_mkdir(log_dir, 0777);
+		close(glibc_open(bypass, O_CREAT, 0644));
+	} else {
+		glibc_remove(bypass);
+	}
+}
 
 // ========== glibc wrappers ==========
 
