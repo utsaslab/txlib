@@ -1,0 +1,6 @@
+seed: 1522949576
+========== TEST #0: 50 txns ==========
+ - txn #0: num_ops -> 19, crashes -> 77
+ - txn #1: num_ops -> 44, RECOVERY FAILED!!!
+worker() error: 31
+Makefile:32: recipe for target 'crash' failed

@@ -269,6 +269,7 @@ void perform_ops(const char *folder)
 void work()
 {
         // recover, then compare before/ and txn/
+        set_bypass(0);
         recover();
 
         // compare txn and before
