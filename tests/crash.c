@@ -275,7 +275,7 @@ void work()
         // compare txn and before
         if (diff("out/txn", "out/before")) {
                 printf("RECOVERY FAILED!!!\n");
-                exit(31);
+                exit(66);
         }
 
         int id = begin_txn();
@@ -285,7 +285,7 @@ void work()
 
         if (diff("out/txn", "out/after")) {
                 printf("TRANSACTION FAILED\n");
-                exit(31);
+                exit(77);
         }
 }
 
@@ -316,7 +316,7 @@ void phoenix()
                                 done = 1;
                                 printf("crashes -> %d\n", crashes);
                         }
-                        // wait(NULL);
+                        
                         int status;
                         waitpid(worker, &status, 0);
                         int result = WEXITSTATUS(status);

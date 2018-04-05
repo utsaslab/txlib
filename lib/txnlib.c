@@ -80,10 +80,12 @@ char *realpath_missing(const char *path)
 	char command[4096];
 	sprintf(command, "realpath -m %s", path);
 
+	set_bypass(1);
 	FILE *out = popen(command, "r");
 	fgets(rp, size, out);
 	pclose(out);
 	rp[strlen(rp)-1] = 0; // trim the newline off
+	set_bypass(0);
 
 	return rp;
 }
@@ -131,6 +133,7 @@ char *nexttok(char *line) { return strtok(line, line ? " \n" : " "); }
 // and there is no easy way in C to do this afaik :|
 void generate_reversed_log()
 {
+	set_bypass(1);
 	// find number of lines
 	int num_lines = 0;
 	FILE *fptr = fopen(undo_log, "r");
@@ -149,6 +152,7 @@ void generate_reversed_log()
 	}
 	fclose(fptr);
 	close(rev);
+	set_bypass(0);
 }
 
 off_t filesize(const char *path)
@@ -382,7 +386,7 @@ int recover()
 	}
 
 	recover_log();
-	glibc_remove(undo_log); // existence of undo log indicates crash
+	rename("logs/undo_log", "logs/recovered_undo_log"); // existence of undo log indicates crash
 
 	return 0;
 }
