@@ -494,7 +494,7 @@ int main()
         srand(tt); // comment for determinism
 
         // tweak
-        int num_tests = 50;
+        int num_tests = 100;
 
         // for logging
         system("rm -rf out/gen");
@@ -509,4 +509,5 @@ int main()
                 printf("========== TEST #%d: %d txns ==========\n", i, num_txns);
                 test(num_txns, i);
         }
+        printf("ALL %d TESTS COMPLETED SUCCESSFULLY!!! :)\n", num_tests);
 }
