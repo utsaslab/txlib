@@ -47,6 +47,7 @@ int open(const char *pathname, int flags, ... /* mode_t mode */);
 // int creat(const char *pathname, mode_t mode);
 // int openat(int dirfd, const char *pathname, int flags, ... /* mode_t mode */);
 int mkdir(const char *pathname, mode_t mode);
+int rename(const char *oldpath, const char *newpath);
 
 // remove
 int remove(const char *pathname);

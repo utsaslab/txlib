@@ -21,7 +21,7 @@
 
 #include "txnlib.h"
 
-#define LAST_OP 4
+#define LAST_OP 5
 #define MIN_OPS 10
 #define MAX_OPS 50
 #define MAX_WAIT_SEC 1
@@ -41,10 +41,12 @@ struct operation {
          * 2 -> remove
          * 3 -> write
          * 4 -> ftruncate
+         * 5 -> rename
          */
         int op;
 
         char path[4096];
+        char path2[4096];
         void *data;
         size_t count;
 
@@ -77,22 +79,106 @@ void append_fs_node(struct fs_node *add, struct fs_node **list)
         (*last) = add;
 }
 
+void diff_recurse(const char *folder, struct fs_node **dir_list, struct fs_node **file_list)
+{
+        DIR *cur_dir;
+        struct dirent *ent;
+        cur_dir = opendir(folder);
+        while ((ent = readdir(cur_dir)) != NULL) {
+                if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, ".."))
+                        continue;
+
+                struct fs_node *add;
+                add = malloc(sizeof(struct fs_node));
+                sprintf(add->path, "%s/%s", folder, ent->d_name);
+                add->next = NULL;
+
+                if (ent->d_type == DT_DIR) {
+                        append_fs_node(add, dir_list);
+                        diff_recurse(add->path, dir_list, file_list);
+                } else if (ent->d_type == DT_REG) {
+                        append_fs_node(add, file_list);
+                } else {
+                        printf("UNSUPPORTED FILE TYPE: %d", ent->d_type);
+                }
+        }
+}
+
 // compares 2 folders; return 0 if same, 1 if different
 int diff(const char *one, const char *two)
 {
-        set_bypass(1);
+        // find all dirs and files within folder one
+        struct fs_node *dirs = NULL;
+        struct fs_node *files = NULL;
+        diff_recurse(one, &dirs, &files);
 
-        char cmd[4096];
-        sprintf(cmd, "diff -r %s %s", one, two);
-        FILE *fp = popen(cmd, "r");
-        char output[4096];
-        memset(output, '\0', 4096);
-        fgets(output, 4096 - 1, fp);
-        pclose(fp);
+        int same = 1;
+        // for all dirs and files, match in folder two
+        struct fs_node *dit = dirs;
+        struct fs_node *fit = files;
+        while (dit) {
+                char twopath[4096];
+                char subpath[4096];
+                memcpy(subpath, &dit->path[strlen(one) + 1], strlen(dit->path) - strlen(one));
+                subpath[strlen(dit->path) - strlen(one)] = '\0';
+                sprintf(twopath, "%s/%s", two, subpath);
 
-        set_bypass(0);
+                DIR *dir = opendir(twopath);
+                if (!dir) {
+                        printf("missing dir %s\n", twopath);
+                        same = 0;
+                        break;
+                } else {
+                        closedir(dir);
+                }
+                dit = dit->next;
+        }
+        while (fit) {
+                char twopath[4096];
+                char subpath[4096];
+                memcpy(subpath, &fit->path[strlen(one)], strlen(fit->path) - strlen(one));
+                subpath[strlen(fit->path) - strlen(one)] = '\0';
+                sprintf(twopath, "%s%s", two, subpath);
 
-        return strlen(output);
+                FILE *f1 = fopen(fit->path, "r");
+                FILE *f2 = fopen(twopath, "r");
+                char ch1, ch2;
+
+                if (!f1 || !f2) {
+                        if (!f1)
+                                printf("missing file %s\n", fit->path);
+                        if (!f2)
+                                printf("missing file %s\n", twopath);
+                        same = 0;
+                } else {
+                        while ( ((ch1 = fgetc(f1)) != EOF) && ((ch2 = fgetc(f2)) != EOF) )
+                                if (ch1 != ch2)
+                                        same = 0;
+                }
+
+                if (f1)
+                        fclose(f1);
+                if (f2)
+                        fclose(f2);
+
+                if (!same)
+                        break;
+
+                fit = fit->next;
+        }
+
+        while (dirs) {
+                struct fs_node *to_free = dirs;
+                dirs = dirs->next;
+                free(to_free);
+        }
+        while (files) {
+                struct fs_node *to_free = files;
+                files = files->next;
+                free(to_free);
+        }
+
+        return !same;
 }
 
 void append_operation(struct operation *op)
@@ -143,10 +229,12 @@ void generate_txn(int num_ops, struct fs_node **dirs, struct fs_node **files, in
                         op->op = 1;
                 else if (roll < 20)
                         op->op = 2;
-                else if (roll < 70)
+                else if (roll < 60)
                         op->op = 3;
-                else
+                else if (roll < 85)
                         op->op = 4;
+                else
+                        op->op = 5;
 
                 // don't delete last file
                 if (op->op == 2 && num_files == 1)
@@ -204,6 +292,25 @@ void generate_txn(int num_ops, struct fs_node **dirs, struct fs_node **files, in
                 } else if (op->op == 4) { // ftruncate
                         sprintf(op->path, "%s", any_file->path);
                         op->count = between(0, MAX_TRUNC);
+                } else if (op->op == 5) { // rename
+                        sprintf(op->path, "%s", any_file->path);
+
+                        struct fs_node *moved = malloc(sizeof(struct fs_node));
+                        sprintf(moved->path, "%s-moved", any_file->path);
+                        moved->prev = NULL;
+                        moved->next = *files;
+                        (*files)->prev = moved;
+                        (*files) = moved;
+
+                        sprintf(op->path2, "%s", moved->path);
+
+                        if (any_file->next)
+                                any_file->next->prev = any_file->prev;
+                        if (any_file->prev)
+                                any_file->prev->next = any_file->next;
+                        if (any_file == *files)
+                                (*files) = (*files)->next;
+                        free(any_file);
                 }
 
                 char tlog[8192];
@@ -237,7 +344,7 @@ void perform_ops(const char *folder)
                 } else if (cur->op == 0) { // create
                         int fd = open(my_path, O_CREAT, 0644);
                         if (fd == -1) {
-                                printf("create() op failed: %s\n", strerror(errno));
+                                printf("create(%s) op failed: %s\n", my_path, strerror(errno));
                                 exit(66);
                         }
                         close(fd);
@@ -246,7 +353,7 @@ void perform_ops(const char *folder)
                 } else if (cur->op == 2) { // remove
                         int err = remove(my_path);
                         if (err) {
-                                printf("remove() op failed: %s\n", strerror(errno));
+                                printf("remove(%s) op failed: %s\n", my_path, strerror(errno));
                                 exit(55);
                         }
                 } else if (cur->op == 3) { // write
@@ -257,6 +364,10 @@ void perform_ops(const char *folder)
                         int fd = open(my_path, O_RDWR);
                         ftruncate(fd, cur->count);
                         close(fd);
+                } else if (cur->op == 5) {
+                        char move[8192];
+                        sprintf(move, "%s/%s", folder, cur->path2);
+                        rename(my_path, move);
                 } else {
                         printf("unsupported operation: %d\n", cur->op);
                 }
@@ -273,7 +384,7 @@ void work()
         recover();
 
         // compare txn and before
-        if (diff("out/txn", "out/before")) {
+        if (diff("out/txn", "out/before") || diff("out/before", "out/txn")) {
                 printf("RECOVERY FAILED!!!\n");
                 exit(66);
         }
@@ -283,7 +394,7 @@ void work()
         save_log(1);
         end_txn(id);
 
-        if (diff("out/txn", "out/after")) {
+        if (diff("out/txn", "out/after") || diff("out/after", "out/txn")) {
                 printf("TRANSACTION FAILED\n");
                 exit(77);
         }
@@ -316,7 +427,7 @@ void phoenix()
                                 done = 1;
                                 printf("crashes -> %d\n", crashes);
                         }
-                        
+
                         int status;
                         waitpid(worker, &status, 0);
                         int result = WEXITSTATUS(status);

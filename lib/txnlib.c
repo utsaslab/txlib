@@ -17,6 +17,7 @@
 
 static int (*glibc_open)(const char *pathname, int flags, ...);
 static int (*glibc_mkdir)(const char *pathname, mode_t mode);
+static int (*glibc_rename)(const char *oldpath, const char *newpath);
 static int (*glibc_remove)(const char *pathname);
 static ssize_t (*glibc_read)(int fd, void *buf, size_t count);
 static ssize_t (*glibc_write)(int fd, const void *buf, size_t count);
@@ -41,6 +42,7 @@ void initialize()
 {
 	glibc_open = dlsym(RTLD_NEXT, "open");
 	glibc_mkdir = dlsym(RTLD_NEXT, "mkdir");
+	glibc_rename = dlsym(RTLD_NEXT, "rename");
 	glibc_remove = dlsym(RTLD_NEXT, "remove");
 	glibc_read = dlsym(RTLD_NEXT, "read");
 	glibc_write = dlsym(RTLD_NEXT, "write");
@@ -198,7 +200,12 @@ int undo_remove(const char *path, const char *backup)
 	char cp[4096];
 	sprintf(cp, "%s.copy", backup);
 	copy(cp, backup);
-	return rename(cp, path);
+	return glibc_rename(cp, path);
+}
+
+int undo_rename(const char *old, const char *new)
+{
+	return glibc_rename(new, old);
 }
 
 int undo_write(const char *path, int pos, int range, int prev_size, const char *backup)
@@ -291,6 +298,10 @@ int recover_log()
 			char *path = nexttok(NULL);
 			char *backup = strtok(nexttok(NULL), "\n"); // newline
 			undo_remove(path, backup);
+		} else if (strcmp("rename", op) == 0) {
+			char *old = nexttok(NULL);
+			char *new = strtok(nexttok(NULL), "\n");
+			undo_rename(old, new);
 		} else if (strcmp("write", op) == 0) {
 			char *path = nexttok(NULL);
 			int pos = atoi(nexttok(NULL));
@@ -326,6 +337,11 @@ int begin_txn(void)
 			printf("Unable to make log directory at %s: (%s)\n", log_dir, strerror(errno));
 			return -1;
 		}
+
+		set_bypass(1);
+		system("rm logs/*");
+		set_bypass(0);
+
 		int fd = glibc_open(undo_log, O_CREAT | O_EXCL, 0644);
 		if (fd == -1) {
 			printf("Unable to make undo log at %s: (%s)\n", undo_log, strerror(errno));
@@ -386,7 +402,7 @@ int recover()
 	}
 
 	recover_log();
-	rename("logs/undo_log", "logs/recovered_undo_log"); // existence of undo log indicates crash
+	glibc_rename("logs/undo_log", "logs/recovered_undo_log"); // existence of undo log indicates crash
 
 	return 0;
 }
@@ -487,6 +503,26 @@ int mkdir(const char *pathname, mode_t mode)
 	return glibc_mkdir(pathname, mode);
 }
 
+int rename(const char *oldpath, const char *newpath)
+{
+	if (!init)
+		initialize();
+
+	recover();
+
+	if (cur_txn) {
+		char entry[4096];
+		char *old_rp = realpath_missing(oldpath);
+		char *new_rp = realpath_missing(newpath);
+		sprintf(entry, "rename %s %s\n", old_rp, new_rp);
+		write_to_log(entry);
+		free(old_rp);
+		free(new_rp);
+	}
+
+	return glibc_rename(oldpath, newpath);
+}
+
 int remove(const char *pathname)
 {
 	if (!init)
@@ -506,7 +542,7 @@ int remove(const char *pathname)
 
 	free(rp);
 
-	return rename(pathname, backup);
+	return glibc_rename(pathname, backup);
 }
 
 ssize_t write(int fd, const void *buf, size_t count)
