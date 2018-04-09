@@ -469,7 +469,7 @@ int open(const char *pathname, int flags, ...)
 		// create log entry
 		sprintf(entry, "touch %s %s\n", rp, metadata_loc);
 	} else {
-		printf("undefined open() state: %s creating -> %d, exists -> %d\n", pathname, creating, exists);
+		// printf("undefined open() state: %s creating -> %d, exists -> %d\n", pathname, creating, exists);
 		// exit(1);
 	}
 	free(rp);

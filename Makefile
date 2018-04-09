@@ -2,6 +2,7 @@ CFLAGS = -Wall
 LIBDIR = lib
 OUTDIR = out
 TESTDIR = tests
+BENCHMARKFLAGS =
 CRASHFLAGS =
 FSXFLAGS = -N 10000
 
@@ -30,8 +31,13 @@ test:
 
 crash:
 	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
-	gcc tests/crash.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/crash -pthread -ldl && \
+	gcc tests/crash.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/crash -ldl && \
 	LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./$(OUTDIR)/crash $(CRASHFLAGS) \
+
+benchmark:
+	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
+	gcc tests/benchmark.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/benchmark -ldl && \
+	LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./$(OUTDIR)/benchmark $(BENCHMARKFLAGS) \
 
 fsx:
 	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
