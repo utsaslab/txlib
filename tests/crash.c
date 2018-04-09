@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -23,13 +24,11 @@
 
 #define LAST_OP 5
 #define MIN_OPS 10
-#define MAX_OPS 50
-#define MAX_WAIT_SEC 1
-#define MAX_WAIT_NSEC 999999999
+#define MAX_OPS 100
 #define MIN_WRITE_SIZE 4096
 #define MAX_WRITE_SIZE 65536
-#define MIN_TXNS 5
-#define MAX_TXNS 50
+#define MIN_TXNS 10
+#define MAX_TXNS 100
 #define MAX_TRUNC 65536
 #define NOISE_SIZE 1000000
 
@@ -62,6 +61,7 @@ struct fs_node {
 struct operation *ops = NULL;
 char noise[NOISE_SIZE];
 
+// inclusive
 int between(int min, int max) { return rand() % (max + 1 - min) + min; }
 
 void make_noise()
@@ -102,6 +102,7 @@ void diff_recurse(const char *folder, struct fs_node **dir_list, struct fs_node 
                         printf("UNSUPPORTED FILE TYPE: %d", ent->d_type);
                 }
         }
+        closedir(cur_dir);
 }
 
 // compares 2 folders; return 0 if same, 1 if different
@@ -116,7 +117,7 @@ int diff(const char *one, const char *two)
         // for all dirs and files, match in folder two
         struct fs_node *dit = dirs;
         struct fs_node *fit = files;
-        while (dit) {
+        while (same && dit) {
                 char twopath[4096];
                 char subpath[4096];
                 memcpy(subpath, &dit->path[strlen(one) + 1], strlen(dit->path) - strlen(one));
@@ -125,15 +126,14 @@ int diff(const char *one, const char *two)
 
                 DIR *dir = opendir(twopath);
                 if (!dir) {
-                        printf("missing dir %s\n", twopath);
+                        printf("diff: dir mismatch -> %s\n", twopath);
                         same = 0;
-                        break;
                 } else {
                         closedir(dir);
                 }
                 dit = dit->next;
         }
-        while (fit) {
+        while (same && fit) {
                 char twopath[4096];
                 char subpath[4096];
                 memcpy(subpath, &fit->path[strlen(one)], strlen(fit->path) - strlen(one));
@@ -146,23 +146,22 @@ int diff(const char *one, const char *two)
 
                 if (!f1 || !f2) {
                         if (!f1)
-                                printf("missing file %s\n", fit->path);
+                                printf("diff: file mismatch -> %s\n", fit->path);
                         if (!f2)
-                                printf("missing file %s\n", twopath);
+                                printf("diff: file mismatch -> %s\n", twopath);
                         same = 0;
                 } else {
                         while ( ((ch1 = fgetc(f1)) != EOF) && ((ch2 = fgetc(f2)) != EOF) )
-                                if (ch1 != ch2)
+                                if (ch1 != ch2) {
+                                        printf("diff: file contents mismatch -> (%s), (%s)\n", fit->path, twopath);
                                         same = 0;
+                                }
                 }
 
                 if (f1)
                         fclose(f1);
                 if (f2)
                         fclose(f2);
-
-                if (!same)
-                        break;
 
                 fit = fit->next;
         }
@@ -375,7 +374,7 @@ void perform_ops(const char *folder)
         }
 }
 
-// ========== threads ==========
+// ========== processes ==========
 
 void work()
 {
@@ -403,6 +402,16 @@ void work()
 // repeatedly kill and revive work()
 void phoenix()
 {
+        // try to base kill times on actual runtime
+        struct timeval start;
+        struct timeval finish;
+        gettimeofday(&start, NULL);
+        work();
+        gettimeofday(&finish, NULL);
+        unsigned long emp_wait_nsec = 0;
+        emp_wait_nsec += 1000000000 * (finish.tv_sec - start.tv_sec);
+        emp_wait_nsec += 1000 * (finish.tv_usec - start.tv_usec);
+
         int done = 0;
         double kill_prob = 100;
         int crashes = 0;
@@ -414,8 +423,8 @@ void phoenix()
                 } else {
                         int roll = between(0, 100);
                         if (roll < kill_prob) {
-                                int sec = between(0, MAX_WAIT_SEC);
-                                int nsec = between(0, MAX_WAIT_NSEC);
+                                int sec = between(0, emp_wait_nsec / 1000000000);
+                                int nsec = between(0, emp_wait_nsec % 1000000000);
                                 struct timespec ts;
                                 ts.tv_sec = sec;
                                 ts.tv_nsec = nsec;

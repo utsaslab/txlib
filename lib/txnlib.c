@@ -332,15 +332,15 @@ int begin_txn(void)
 	recover();
 
 	if (!cur_txn) { // beginning transaction
+		set_bypass(1);
+		system("rm -rf logs");
+		set_bypass(0);
+
 		int err = glibc_mkdir(log_dir, 0777);
 		if (err && errno != EEXIST) {
 			printf("Unable to make log directory at %s: (%s)\n", log_dir, strerror(errno));
 			return -1;
 		}
-
-		set_bypass(1);
-		system("rm logs/*");
-		set_bypass(0);
 
 		int fd = glibc_open(undo_log, O_CREAT | O_EXCL, 0644);
 		if (fd == -1) {
