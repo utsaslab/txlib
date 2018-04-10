@@ -252,6 +252,7 @@ int undo_touch(const char *path, const char *metadata)
 	fgets(buf, size, md);
 	int mtim_sec = atoi(nexttok(buf));
 	int mtim_usec = atoi(nexttok(NULL)) % 1000;
+	fclose(md);
 
 	int err = chmod(path, mode);
 	if (err) {

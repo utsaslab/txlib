@@ -34,6 +34,11 @@ crash:
 	gcc tests/crash.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/crash -ldl && \
 	LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./$(OUTDIR)/crash $(CRASHFLAGS) \
 
+crash-recovery:
+	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
+	gcc tests/crash-recovery.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/crash-recovery -ldl && \
+	LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./$(OUTDIR)/crash-recovery $(CRASHFLAGS) \
+
 benchmark:
 	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
 	gcc tests/benchmark.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/benchmark -ldl && \

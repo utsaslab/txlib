@@ -56,7 +56,7 @@ int main()
         printf("  +++++++++++++\n");
         printf("  +  RESULTS  +\n");
         printf("  +++++++++++++\n");
-        printf("> without txn: %lds %ldns\n", no_txn / 1000000000, no_txn);
-        printf("> within txn: %lds %ldns\n", txn / 1000000000, txn);
+        printf("> without txn: %lds %ldns\n", no_txn / 1000000000, no_txn % 1000000000);
+        printf("> within txn: %lds %ldns\n", txn / 1000000000, txn % 1000000000);
         printf("> overhead: %fx\n", overhead);
 }
