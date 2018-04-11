@@ -136,25 +136,28 @@ char *nexttok(char *line) { return strtok(line, line ? " \n" : " "); }
 void generate_reversed_log()
 {
 	set_bypass(1);
-	// find number of lines
-	int num_lines = 0;
-	FILE *fptr = fopen(undo_log, "r");
-	char temp[4096];
-	while (fgets(temp, 4096, fptr))
-		num_lines++;
-
-	// iterate backwards
-	int rev = glibc_open(reversed_log, O_CREAT | O_RDWR | O_TRUNC, 0644);
-	for (int i = num_lines; i > 0; i--) {
-		rewind(fptr);
-		char entry[4096];
-		for (int j = 0; j < i; j++)
-			fgets(entry, 4096, fptr);
-		glibc_write(rev, entry, strlen(entry));
-	}
-	fclose(fptr);
-	close(rev);
+	system("tac logs/undo_log > logs/reversed_log");
 	set_bypass(0);
+	// set_bypass(1);
+	// // find number of lines
+	// int num_lines = 0;
+	// FILE *fptr = fopen(undo_log, "r");
+	// char temp[4096];
+	// while (fgets(temp, 4096, fptr))
+	// 	num_lines++;
+	//
+	// // iterate backwards
+	// int rev = glibc_open(reversed_log, O_CREAT | O_RDWR | O_TRUNC, 0644);
+	// for (int i = num_lines; i > 0; i--) {
+	// 	rewind(fptr);
+	// 	char entry[4096];
+	// 	for (int j = 0; j < i; j++)
+	// 		fgets(entry, 4096, fptr);
+	// 	glibc_write(rev, entry, strlen(entry));
+	// }
+	// fclose(fptr);
+	// close(rev);
+	// set_bypass(0);
 }
 
 off_t filesize(const char *path)

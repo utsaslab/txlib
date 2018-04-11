@@ -1,4 +1,4 @@
-        /**
+/**
  * This test attempts to expose the consistency guarantees txnlib attempts
  * to provide. The 2 relevant "states" in which crashing needs to be tested
  * is before a recovery (in a txn) and during a recovery. Anything else is
