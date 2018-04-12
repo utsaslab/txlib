@@ -28,8 +28,161 @@ unsigned long time_passed(struct timeval start, struct timeval finish)
         return passed;
 }
 
+unsigned long multiopen(int count, int txn, int create)
+{
+        struct timeval start, finish;
+
+        mkdir("out/open", 0755);
+        char *files[count]; // TODO: free later
+        for (int i = 0; i < count; i++) {
+                char *f = malloc(32);
+                sprintf(f, "out/open/%d.txt", i);
+                files[i] = f;
+        }
+
+        int flags = O_RDWR;
+        if (create)
+                flags |= O_CREAT;
+
+        unsigned long runtime = 0;
+        for (int r = 0; r < NUM_RUNS; r++) {
+                if (r % 10 == 0) {
+                        printf("%d ", r);
+                        fflush(stdout);
+                }
+
+                set_bypass(1);
+                system("rm -f out/open/*");
+                set_bypass(0);
+
+                if (!create)
+                        for (int i = 0; i < count; i++)
+                                close(open(files[i], O_CREAT, 0644));
+
+                gettimeofday(&start, NULL);
+
+                int txn_id = -1;
+                if (txn)
+                        txn_id = begin_txn();
+
+                int first = open(files[0], flags, 0644);
+                int last = -1;
+                for (int i = 1; i < count; i++)
+                        last = open(files[i], flags, 0644);
+
+                if (txn)
+                        end_txn(txn_id);
+
+                gettimeofday(&finish, NULL);
+
+                for (int i = first; i <= last; i++)
+                        close(i);
+
+                runtime += time_passed(start, finish);
+        }
+        return runtime / NUM_RUNS;
+}
+
+void openbench()
+{
+        /**
+         * permutate:
+         *  - within, without
+         *  - create, existing
+         */
+
+         printf("  +++++++++++++++++++++++++\n");
+         printf("  +  BENCHMARKING open()  +\n");
+         printf("  +++++++++++++++++++++++++\n");
+         printf(" - txn: within, without\n");
+         printf(" - file: create, existing\n");
+         printf("============================================\n");
+
+         unsigned long none_create, none_existing;
+         unsigned long txn_create, txn_existing;
+         int count = 100;
+
+         printf("- > txnless\n");
+         printf("- - > creating file: "); fflush(stdout);
+         none_create = multiopen(count, 0, 1);
+         printf("%lds %ldns\n", none_create / NS, none_create % NS);
+         printf("- - > existing file: "); fflush(stdout);
+         none_existing = multiopen(count, 0, 0);
+         printf("%lds %ldns\n", none_existing / NS, none_existing % NS);
+
+         printf("- > txnl\n");
+         printf("- - > creating file: "); fflush(stdout);
+         txn_create = multiopen(count, 1, 1);
+         printf("%lds %ldns (overhead: %fx)\n", txn_create / NS, txn_create % NS, (double) txn_create / none_create);
+         printf("- - > existing file: "); fflush(stdout);
+         txn_existing = multiopen(count, 1, 0);
+         printf("%lds %ldns (overhead: %fx)\n", txn_existing / NS, txn_existing % NS, (double) txn_existing / none_existing);
+
+         printf("============================================\n");
+}
+
+unsigned long multimkdir(int count, int txn)
+{
+        set_bypass(1);
+        system("rm -rf out/mkdir");
+        set_bypass(0);
+
+        mkdir("out/mkdir", 0755);
+        char *dirs[count]; // TODO: free later
+        for (int i = 0; i < count; i++) {
+                char *d = malloc(32);
+                sprintf(d, "out/mkdir/%d", i);
+                dirs[i] = d;
+        }
+
+        struct timeval start, finish;
+        unsigned long runtime = 0;
+
+        gettimeofday(&start, NULL);
+
+        int txn_id = -1;
+        if (txn)
+                txn_id = begin_txn();
+
+        for (int i = 0; i < count; i++)
+                mkdir(dirs[i], 0755);
+
+        if (txn)
+                end_txn(txn_id);
+
+        gettimeofday(&finish, NULL);
+        runtime = time_passed(start, finish);
+
+        return runtime / count;
+}
+
+void mkdirbench()
+{
+        /**
+         * permutate:
+         *  - within, without txn
+         */
+        printf("  ++++++++++++++++++++++++++\n");
+        printf("  +  BENCHMARKING mkdir()  +\n");
+        printf("  ++++++++++++++++++++++++++\n");
+        printf(" - txn: within, without\n");
+        printf("============================================\n");
+
+        unsigned long none, txn;
+        int count = 1000;
+
+        printf("- > txnless: "); fflush(stdout);
+        none = multimkdir(count, 0);
+        printf("%lds %ldns\n", none / NS, none % NS);
+        printf("- > txnl:    "); fflush(stdout);
+        txn = multimkdir(count, 1);
+        printf("%lds %ldns (overhead: %fx)\n", txn / NS, txn % NS, (double) txn / none);
+
+        printf("============================================\n");
+}
+
 // returns average of all runs
-unsigned long bench(int buf_size, int count, int txn, int starting_size, int offset)
+unsigned long multiwrite(int buf_size, int txn, int count, int starting_size, int offset)
 {
         struct timeval start, finish;
         char buf[buf_size];
@@ -43,7 +196,6 @@ unsigned long bench(int buf_size, int count, int txn, int starting_size, int off
 
         unsigned long runtime = 0;
         for (int i = 0; i < NUM_RUNS; i++) {
-                // printf("run %d\n", i);
                 if (i % 10 == 0) {
                         printf("%d ", i);
                         fflush(stdout);
@@ -81,75 +233,99 @@ unsigned long bench(int buf_size, int count, int txn, int starting_size, int off
         return runtime / NUM_RUNS;
 }
 
-int main()
+void writebench(int shrt, int lng, int small, int big)
 {
         /**
-         * Need to test all configurations of:
-         *  - short/long sequence of fs ops
+         * permutate:
          *  - within/without txn
+         *  - short/long sequence of fs ops
          *  - changing new/small/big file
          */
 
-        printf("  ++++++++++++++++++++\n");
-        printf("  +  CONFIGURATIONS  +\n");
-        printf("  ++++++++++++++++++++\n");
-        printf(" - fs ops: short -> %d, long -> %d\n", SHORT, LONG);
+        printf("  ++++++++++++++++++++++++++\n");
+        printf("  +  BENCHMARKING write()  +\n");
+        printf("  ++++++++++++++++++++++++++\n");
         printf(" - txn: within, without\n");
-        printf(" - file: new -> %d, small -> %d KB, big -> %d GB\n", 0, SMALL / 1024, BIG / (1024*1024*1024));
+        printf(" - fs ops: short -> %d, long -> %d\n", shrt, lng);
+        printf(" - file: new -> %d, small -> %d KB, big -> %d GB\n", 0, small / 1024, big / (1024*1024*1024));
         printf("============================================\n");
 
-        struct timeval start, finish;
-        unsigned long short_none_new, short_none_small, short_none_big;
-        unsigned long short_txn_new, short_txn_small, short_txn_big;
-        unsigned long long_none_new, long_none_small, long_none_big;
-        unsigned long long_txn_new, long_txn_small, long_txn_big;
+        unsigned long none_short_new, none_short_small, none_short_big;
+        unsigned long none_long_new, none_long_small, none_long_big;
+        unsigned long txn_short_new, txn_short_small, txn_short_big;
+        unsigned long txn_long_new, txn_long_small, txn_long_big;
         int buf_size = 64;
 
-        printf("> short seqs of fs ops...\n");
+        printf("> txnless...\n");
 
-        printf("- > txnless\n");
+        printf("- > short seqs of writes...\n");
         printf("- - > new file:   "); fflush(stdout);
-        short_none_new = bench(buf_size, SHORT, 0, 0, 0);
-        printf("%lds %ldns\n", short_none_new / NS, short_none_new % NS);
+        none_short_new = multiwrite(buf_size, 0, shrt, 0, 0);
+        printf("%lds %ldns\n", none_short_new / NS, none_short_new % NS);
         printf("- - > small file: "); fflush(stdout);
-        short_none_small = bench(buf_size, SHORT, 0, SMALL, SMALL - 128);
-        printf("%lds %ldns\n", short_none_small / NS, short_none_small % NS);
+        none_short_small = multiwrite(buf_size, 0, shrt, small, small - 128);
+        printf("%lds %ldns\n", none_short_small / NS, none_short_small % NS);
         printf("- - > big file:   "); fflush(stdout);
-        short_none_big = bench(buf_size, SHORT, 0, BIG, BIG * 1/4);
-        printf("%lds %ldns\n", short_none_big / NS, short_none_big % NS);
+        none_short_big = multiwrite(buf_size, 0, shrt, big, big * 1/4);
+        printf("%lds %ldns\n", none_short_big / NS, none_short_big % NS);
 
-        printf("- > txnl\n");
+        printf("- > long seqs of writes...\n");
         printf("- - > new file:   "); fflush(stdout);
-        short_txn_new = bench(buf_size, SHORT, 1, 0, 0);
-        printf("%lds %ldns %fx\n", short_txn_new / NS, short_txn_new % NS, (double) short_txn_new / short_none_new);
+        none_long_new = multiwrite(buf_size, 0, lng, 0, 0);
+        printf("%lds %ldns\n", none_long_new / NS, none_long_new % NS);
         printf("- - > small file: "); fflush(stdout);
-        short_txn_small = bench(buf_size, SHORT, 1, SMALL, SMALL - 128);
-        printf("%lds %ldns %fx\n", short_txn_small / NS, short_txn_small % NS, (double) short_txn_small / short_none_small);
+        none_long_small = multiwrite(buf_size, 0, lng, small, small - 128);
+        printf("%lds %ldns\n", none_long_small / NS, none_long_small % NS);
         printf("- - > big file:   "); fflush(stdout);
-        short_txn_big = bench(buf_size, SHORT, 1, BIG, BIG * 1/4);
-        printf("%lds %ldns %fx\n", short_txn_big / NS, short_txn_big % NS, (double) short_txn_big / short_none_big);
+        none_long_big = multiwrite(buf_size, 0, lng, big, big * 1/4);
+        printf("%lds %ldns\n", none_long_big / NS, none_long_big % NS);
 
-        printf("> long seqs of fs ops...\n");
+        printf("> txnl...\n");
 
-        printf("- > txnless\n");
+        printf("- > short seqs of writes...\n");
         printf("- - > new file:   "); fflush(stdout);
-        long_none_new = bench(buf_size, LONG, 0, 0, 0);
-        printf("%lds %ldns\n", long_none_new / NS, long_none_new % NS);
+        txn_short_new = multiwrite(buf_size, 1, shrt, 0, 0);
+        printf("%lds %ldns (overhead: %fx)\n", txn_short_new / NS, txn_short_new % NS, (double) txn_short_new / none_short_new);
         printf("- - > small file: "); fflush(stdout);
-        long_none_small = bench(buf_size, LONG, 0, SMALL, SMALL - 128);
-        printf("%lds %ldns\n", long_none_small / NS, long_none_small % NS);
+        txn_short_small = multiwrite(buf_size, 1, shrt, small, small - 128);
+        printf("%lds %ldns (overhead: %fx)\n", txn_short_small / NS, txn_short_small % NS, (double) txn_short_small / none_short_small);
         printf("- - > big file:   "); fflush(stdout);
-        long_none_big = bench(buf_size, LONG, 0, BIG, BIG * 1/4);
-        printf("%lds %ldns\n", long_none_big / NS, long_none_big % NS);
+        txn_short_big = multiwrite(buf_size, 1, shrt, big, big * 1/4);
+        printf("%lds %ldns (overhead: %fx)\n", txn_short_big / NS, txn_short_big % NS, (double) txn_short_big / none_short_big);
 
-        printf("- > txnl\n");
+        printf("- > long seqs of writes...\n");
         printf("- - > new file:   "); fflush(stdout);
-        long_txn_new = bench(buf_size, LONG, 1, 0, 0);
-        printf("%lds %ldns %fx\n", long_txn_new / NS, long_txn_new % NS, (double) long_txn_new / long_none_new);
+        txn_long_new = multiwrite(buf_size, 1, lng, 0, 0);
+        printf("%lds %ldns (overhead: %fx)\n", txn_long_new / NS, txn_long_new % NS, (double) txn_long_new / none_long_new);
         printf("- - > small file: "); fflush(stdout);
-        long_txn_small = bench(buf_size, LONG, 1, SMALL, SMALL - 128);
-        printf("%lds %ldns %fx\n", long_txn_small / NS, long_txn_small % NS, (double) long_txn_small / long_none_small);
+        txn_long_small = multiwrite(buf_size, 1, lng, small, small - 128);
+        printf("%lds %ldns (overhead: %fx)\n", txn_long_small / NS, txn_long_small % NS, (double) txn_long_small / none_long_small);
         printf("- - > big file:   "); fflush(stdout);
-        long_txn_big = bench(buf_size, LONG, 1, BIG, BIG * 1/4);
-        printf("%lds %ldns %fx\n", long_txn_big / NS, long_txn_big % NS, (double) long_txn_big / long_none_big);
+        txn_long_big = multiwrite(buf_size, 1, lng, big, big * 1/4);
+        printf("%lds %ldns (overhead: %fx)\n", txn_long_big / NS, txn_long_big % NS, (double) txn_long_big / none_long_big);
+
+        printf("============================================\n");
+}
+
+int main()
+{
+        /**
+         * 0 -> open
+         * 1 -> mkdir
+         * 2 -> rename
+         * 3 -> remove
+         * 4 -> write
+         */
+        int op = 1;
+
+        if (op == 0)
+                openbench();
+        else if (op == 1)
+                mkdirbench();
+        else if (op == 2)
+                renamebench();
+        else if (op == 3)
+                removebench();
+        else if (op == 4)
+                writebench(SHORT, LONG, SMALL, BIG);
 }
