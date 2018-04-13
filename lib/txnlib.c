@@ -582,10 +582,6 @@ ssize_t write(int fd, const void *buf, size_t count)
 		fsync(backup_data);
 		close(backup_data);
 
-		/**
-		 * TODO: need a way to figure out how many bytes will actually
-		 *       be written, or log would be inaccurate if count is not returned
-		 */
 		sprintf(entry, "write %s %ld %ld %ld %s\n", path, pos, count + zeros, fsize, backup_loc);
 		write_to_log(entry);
 		free(path);
