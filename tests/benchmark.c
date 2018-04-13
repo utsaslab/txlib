@@ -9,6 +9,7 @@
 
 #include "txnlib.h"
 
+#define GB 1073741824
 #define NS 1000000000
 
 static const char *working_file = "out/bench.file";
@@ -107,120 +108,6 @@ void openbench()
          printf("============================================\n");
 }
 
-unsigned long multimkdir(int count, int txn)
-{
-        set_bypass(1);
-        system("rm -rf out/mkdir");
-        set_bypass(0);
-
-        mkdir("out/mkdir", 0755);
-        char *dirs[count]; // TODO: free later
-        for (int i = 0; i < count; i++) {
-                char *d = malloc(32);
-                sprintf(d, "out/mkdir/%d", i);
-                dirs[i] = d;
-        }
-
-        struct timeval start, finish;
-        {
-                gettimeofday(&start, NULL);
-                int txn_id = -1;
-                if (txn)
-                        txn_id = begin_txn();
-
-                for (int i = 0; i < count; i++)
-                        mkdir(dirs[i], 0755);
-
-                if (txn)
-                        end_txn(txn_id);
-
-                gettimeofday(&finish, NULL);
-        }
-
-        return time_passed(start, finish) / count;
-}
-
-void mkdirbench()
-{
-        /**
-         * permutate:
-         *  - within/without txn
-         */
-        printf("  ++++++++++++++++++++++++++\n");
-        printf("  +  BENCHMARKING mkdir()  +\n");
-        printf("  ++++++++++++++++++++++++++\n");
-        printf(" - txn: within, without\n");
-        printf("============================================\n");
-
-        unsigned long none, txn;
-        int count = 1000;
-
-        printf("- > txnless: "); fflush(stdout);
-        none = multimkdir(count, 0);
-        printf("%lds %ldns\n", none / NS, none % NS);
-        printf("- > txnl:    "); fflush(stdout);
-        txn = multimkdir(count, 1);
-        printf("%lds %ldns (overhead: %fx)\n", txn / NS, txn % NS, (double) txn / none);
-
-        printf("============================================\n");
-}
-
-unsigned long multirename(int count, int txn)
-{
-        mkdir("out/rename", 0755);
-        char even[64], odd[64];
-        sprintf(even, "out/rename/even.txt");
-        sprintf(odd, "out/rename/odd.txt");
-        close(open(even, O_CREAT, 0644));
-
-        struct timeval start, finish;
-        {
-                gettimeofday(&start, NULL);
-                int txn_id = -1;
-                if (txn)
-                        txn_id = begin_txn();
-
-                for (int i = 0; i < count; i++) {
-                        if (i % 2 == 0)
-                                rename(even, odd);
-                        else
-                                rename(odd, even);
-                }
-
-                if (txn)
-                        end_txn(txn_id);
-
-                gettimeofday(&finish, NULL);
-        }
-
-        return time_passed(start, finish) / count;
-}
-
-void renamebench()
-{
-        /**
-         * permutate:
-         *  - within/without txn
-         */
-        printf("  +++++++++++++++++++++++++++\n");
-        printf("  +  BENCHMARKING rename()  +\n");
-        printf("  +++++++++++++++++++++++++++\n");
-        printf(" - txn: within, without\n");
-        printf("============================================\n");
-
-        unsigned long none, txn;
-        int count = 10000;
-
-        printf("- > txnless: "); fflush(stdout);
-        none = multirename(count, 0);
-        printf("%lds %ldns\n", none / NS, none % NS);
-        printf("- > txnl:    "); fflush(stdout);
-        txn = multirename(count, 1);
-        printf("%lds %ldns (overhead: %fx)\n", txn / NS, txn % NS, (double) txn / none);
-
-        printf("============================================\n");
-}
-
 unsigned long multiremove(int count, int txn, int file)
 {
         mkdir("out/remove", 0755);
@@ -291,124 +178,153 @@ void removebench()
         printf("============================================\n");
 }
 
-unsigned long multiwrite(int buf_size, int count, int txn, int length, int starting_size, int offset)
+// durability: 0 -> none, 1 -> fsync, 2 -> txn
+unsigned long multiwrite(int buf_size, int count, int durability, int overwrite, int length)
 {
-        char cmd[1024];
-        sprintf(cmd, "dd if=/dev/zero of=%s count=%d bs=%d > /dev/null 2>&1", working_backup, starting_size / 1024, 1024);
-        set_bypass(1);
-        system(cmd);
-        set_bypass(0);
-
-        if (starting_size) {
-                char copy[1024];
-                sprintf(copy, "cp %s %s", working_backup, working_file);
+        if (overwrite) {
+                char cmd[1024];
+                sprintf(cmd, "dd if=/dev/zero of=%s count=%d bs=%d > /dev/null 2>&1", working_file, GB / 1024, 1024);
                 set_bypass(1);
-                system(copy);
+                system(cmd);
                 set_bypass(0);
-        } else {
-                remove(working_file);
         }
-
 
         char buf[buf_size];
-        memset(buf, '>', buf_size);
-        struct timeval start, finish;
+        memset(buf, '1', buf_size);
+        unsigned long runtime = 0;
 
-        int fd = open(working_file, O_CREAT | O_RDWR, 0644);
-        {
-                gettimeofday(&start, NULL);
-                int txn_id = -1;
-                if (txn)
-                        txn_id = begin_txn();
+        for (int i = 0; i < count; i++) {
+                // if (i % 10 == 0) {
+                //         printf("%d ", i);
+                //         fflush(stdout);
+                // }
 
-                lseek(fd, offset, SEEK_SET);
-                for (int i = 0; i < count; i++)
-                        for (int j = 0; j < length; j++)
+                struct timeval start, finish;
+                if (!overwrite)
+                        remove(working_file);
+
+                int fd = open(working_file, O_CREAT | O_RDWR, 0644);
+                {
+                        gettimeofday(&start, NULL);
+                        int txn_id = -1;
+                        if (durability == 2)
+                                txn_id = begin_txn();
+
+                        for (int j = 0; j < length; j++) {
                                 write(fd, buf, buf_size);
+                                if (durability == 1)
+                                        fsync(fd);
+                        }
 
-                if (txn)
-                        end_txn(txn_id);
-                gettimeofday(&finish, NULL);
+                        if (durability == 2)
+                                end_txn(txn_id);
+                        gettimeofday(&finish, NULL);
+
+                }
+                close(fd);
+                runtime += time_passed(start, finish);
         }
-        close(fd);
 
-        return time_passed(start, finish) / count;
+        return runtime / count;
 }
 
 void writebench()
 {
         /**
          * permutate:
-         *  - within/without txn
-         *  - short/long sequence of fs ops
-         *  - changing new/small/big file
+         *  - memory/fsync/txn writes
+         *  - overwrite/append to file
+         *  - single/short/long sequence of fs ops
          */
 
-        int shrt = 10, lng = 1000;
-        int small = 4096, big = 1073741824;
+        int shrt = 10, lng = 500;
+        int gb = 1073741824;
 
         printf("  ++++++++++++++++++++++++++\n");
         printf("  +  BENCHMARKING write()  +\n");
         printf("  ++++++++++++++++++++++++++\n");
-        printf(" - txn: within, without\n");
-        printf(" - fs ops: short -> %d, long -> %d\n", shrt, lng);
-        printf(" - file: new -> %d, small -> %d KB, big -> %d GB\n", 0, small / 1024, big / (1024*1024*1024));
+        printf(" - fs ops: memory, fsync, txn\n");
+        printf(" - file: append, overwrite\n");
+        printf(" - length: single -> %d, short -> %d, long -> %d\n", 1, shrt, lng);
         printf("============================================\n");
 
-        unsigned long none_short_new, none_short_small, none_short_big;
-        unsigned long none_long_new, none_long_small, none_long_big;
-        unsigned long txn_short_new, txn_short_small, txn_short_big;
-        unsigned long txn_long_new, txn_long_small, txn_long_big;
-        int buf_size = 64;
-        int count = 50;
+        unsigned long mem_ap_single, mem_ap_short, mem_ap_long;
+        unsigned long mem_ow_single, mem_ow_short, mem_ow_long;
+        unsigned long fsync_ap_single, fsync_ap_short, fsync_ap_long;
+        unsigned long fsync_ow_single, fsync_ow_short, fsync_ow_long;
+        unsigned long txn_ap_single, txn_ap_short, txn_ap_long;
+        unsigned long txn_ow_single, txn_ow_short, txn_ow_long;
+        int buf_size = 128;
+        int count = 20;
 
-        printf("> txnless...\n");
+        printf("> in memory...\n");
 
-        printf("- > short seqs of writes...\n");
-        printf("- - > new file:   "); fflush(stdout);
-        none_short_new = multiwrite(buf_size, count, 0, shrt, 0, 0);
-        printf("%lds %ldns\n", none_short_new / NS, none_short_new % NS);
-        printf("- - > small file: "); fflush(stdout);
-        none_short_small = multiwrite(buf_size, count, 0, shrt, small, small - 128);
-        printf("%lds %ldns\n", none_short_small / NS, none_short_small % NS);
-        printf("- - > big file:   "); fflush(stdout);
-        none_short_big = multiwrite(buf_size, count, 0, shrt, big, big * 1/4);
-        printf("%lds %ldns\n", none_short_big / NS, none_short_big % NS);
+        printf("- > append...\n");
+        printf("- - > single: "); fflush(stdout);
+        mem_ap_single = multiwrite(buf_size, count, 0, 0, 1);
+        printf("%02lds %09ldns\n", mem_ap_single / NS, mem_ap_single % NS);
+        printf("- - > short:  "); fflush(stdout);
+        mem_ap_short = multiwrite(buf_size, count, 0, 0, shrt);
+        printf("%02lds %09ldns\n", mem_ap_short / NS, mem_ap_short % NS);
+        printf("- - > long:   "); fflush(stdout);
+        mem_ap_long = multiwrite(buf_size, count, 0, 0, lng);
+        printf("%02lds %09ldns\n", mem_ap_long / NS, mem_ap_long % NS);
+        printf("- > overwrite...\n");
+        printf("- - > single: "); fflush(stdout);
+        mem_ow_single = multiwrite(buf_size, count, 0, 1, 1);
+        printf("%02lds %09ldns\n", mem_ow_single / NS, mem_ow_single % NS);
+        printf("- - > short:  "); fflush(stdout);
+        mem_ow_short = multiwrite(buf_size, count, 0, 1, shrt);
+        printf("%02lds %09ldns\n", mem_ow_short / NS, mem_ow_short % NS);
+        printf("- - > long:   "); fflush(stdout);
+        mem_ow_long = multiwrite(buf_size, count, 0, 1, lng);
+        printf("%02lds %09ldns\n", mem_ow_long / NS, mem_ow_long % NS);
 
-        printf("- > long seqs of writes...\n");
-        printf("- - > new file:   "); fflush(stdout);
-        none_long_new = multiwrite(buf_size, count, 0, lng, 0, 0);
-        printf("%lds %ldns\n", none_long_new / NS, none_long_new % NS);
-        printf("- - > small file: "); fflush(stdout);
-        none_long_small = multiwrite(buf_size, count, 0, lng, small, small - 128);
-        printf("%lds %ldns\n", none_long_small / NS, none_long_small % NS);
-        printf("- - > big file:   "); fflush(stdout);
-        none_long_big = multiwrite(buf_size, count, 0, lng, big, big * 1/4);
-        printf("%lds %ldns\n", none_long_big / NS, none_long_big % NS);
+        printf("> ending fsync()...\n");
 
-        printf("> txnl...\n");
+        printf("- > append...\n");
+        printf("- - > single: "); fflush(stdout);
+        fsync_ap_single = multiwrite(buf_size, count, 1, 0, 1);
+        printf("%02lds %09ldns\n", fsync_ap_single / NS, fsync_ap_single % NS);
+        printf("- - > short:  "); fflush(stdout);
+        fsync_ap_short = multiwrite(buf_size, count, 1, 0, shrt);
+        printf("%02lds %09ldns\n", fsync_ap_short / NS, fsync_ap_short % NS);
+        printf("- - > long:   "); fflush(stdout);
+        fsync_ap_long = multiwrite(buf_size, count, 1, 0, lng);
+        printf("%02lds %09ldns\n", fsync_ap_long / NS, fsync_ap_long % NS);
+        printf("- > overwrite...\n");
+        printf("- - > single: "); fflush(stdout);
+        fsync_ow_single = multiwrite(buf_size, count, 1, 1, 1);
+        printf("%02lds %09ldns\n", fsync_ow_single / NS, fsync_ow_single % NS);
+        printf("- - > short:  "); fflush(stdout);
+        fsync_ow_short = multiwrite(buf_size, count, 1, 1, shrt);
+        printf("%02lds %09ldns\n", fsync_ow_short / NS, fsync_ow_short % NS);
+        printf("- - > long:   "); fflush(stdout);
+        fsync_ow_long = multiwrite(buf_size, count, 1, 1, lng);
+        printf("%02lds %09ldns\n", fsync_ow_long / NS, fsync_ow_long % NS);
 
-        printf("- > short seqs of writes...\n");
-        printf("- - > new file:   "); fflush(stdout);
-        txn_short_new = multiwrite(buf_size, count, 1, shrt, 0, 0);
-        printf("%lds %ldns (overhead: %fx)\n", txn_short_new / NS, txn_short_new % NS, (double) txn_short_new / none_short_new);
-        printf("- - > small file: "); fflush(stdout);
-        txn_short_small = multiwrite(buf_size, count, 1, shrt, small, small - 128);
-        printf("%lds %ldns (overhead: %fx)\n", txn_short_small / NS, txn_short_small % NS, (double) txn_short_small / none_short_small);
-        printf("- - > big file:   "); fflush(stdout);
-        txn_short_big = multiwrite(buf_size, count, 1, shrt, big, big * 1/4);
-        printf("%lds %ldns (overhead: %fx)\n", txn_short_big / NS, txn_short_big % NS, (double) txn_short_big / none_short_big);
+        printf("> transactional...\n");
 
-        printf("- > long seqs of writes...\n");
-        printf("- - > new file:   "); fflush(stdout);
-        txn_long_new = multiwrite(buf_size, count, 1, lng, 0, 0);
-        printf("%lds %ldns (overhead: %fx)\n", txn_long_new / NS, txn_long_new % NS, (double) txn_long_new / none_long_new);
-        printf("- - > small file: "); fflush(stdout);
-        txn_long_small = multiwrite(buf_size, count, 1, lng, small, small - 128);
-        printf("%lds %ldns (overhead: %fx)\n", txn_long_small / NS, txn_long_small % NS, (double) txn_long_small / none_long_small);
-        printf("- - > big file:   "); fflush(stdout);
-        txn_long_big = multiwrite(buf_size, count, 1, lng, big, big * 1/4);
-        printf("%lds %ldns (overhead: %fx)\n", txn_long_big / NS, txn_long_big % NS, (double) txn_long_big / none_long_big);
+        printf("- > append...\n");
+        printf("- - > single: "); fflush(stdout);
+        txn_ap_single = multiwrite(buf_size, count, 2, 0, 1);
+        printf("%02lds %09ldns (overhead: mem -> %4.2fx, fsync -> %4.2fx)\n", txn_ap_single / NS, txn_ap_single % NS, (double) txn_ap_single / mem_ap_single, (double) txn_ap_single / fsync_ap_single);
+        printf("- - > short:  "); fflush(stdout);
+        txn_ap_short = multiwrite(buf_size, count, 2, 0, shrt);
+        printf("%02lds %09ldns (overhead: mem -> %4.2fx, fsync -> %4.2fx)\n", txn_ap_short / NS, txn_ap_short % NS, (double) txn_ap_short / mem_ap_short, (double) txn_ap_short / fsync_ap_short);
+        printf("- - > long:   "); fflush(stdout);
+        txn_ap_long = multiwrite(buf_size, count, 2, 0, lng);
+        printf("%02lds %09ldns (overhead: mem -> %4.2fx, fsync -> %4.2fx)\n", txn_ap_long / NS, txn_ap_long % NS, (double) txn_ap_long / mem_ap_long, (double) txn_ap_long / fsync_ap_long);
+        printf("- > overwrite...\n");
+        printf("- - > single: "); fflush(stdout);
+        txn_ow_single = multiwrite(buf_size, count, 2, 1, 1);
+        printf("%02lds %09ldns (overhead: mem -> %4.2fx, fsync -> %4.2fx)\n", txn_ow_single / NS, txn_ow_single % NS, (double) txn_ow_single / mem_ow_single, (double) txn_ow_single / fsync_ow_single);
+        printf("- - > short:  "); fflush(stdout);
+        txn_ow_short = multiwrite(buf_size, count, 2, 1, shrt);
+        printf("%02lds %09ldns (overhead: mem -> %4.2fx, fsync -> %4.2fx)\n", txn_ow_short / NS, txn_ow_short % NS, (double) txn_ow_short / mem_ow_short, (double) txn_ow_short / fsync_ow_short);
+        printf("- - > long:   "); fflush(stdout);
+        txn_ow_long = multiwrite(buf_size, count, 2, 1, lng);
+        printf("%02lds %09ldns (overhead: mem -> %4.2fx, fsync -> %4.2fx)\n", txn_ow_long / NS, txn_ow_long % NS, (double) txn_ow_long / mem_ow_long, (double) txn_ow_long / fsync_ow_long);
 
         printf("============================================\n");
 }
@@ -417,21 +333,15 @@ int main()
 {
         /**
          * 0 -> open
-         * 1 -> mkdir
-         * 2 -> rename
-         * 3 -> remove
-         * 4 -> write
+         * 1 -> remove
+         * 2 -> write
          */
-        int op = 0;
+        int op = 4;
 
         if (op == 0)
                 openbench();
         else if (op == 1)
-                mkdirbench();
-        else if (op == 2)
-                renamebench();
-        else if (op == 3)
                 removebench();
-        else if (op == 4)
+        else if (op == 2)
                 writebench();
 }
