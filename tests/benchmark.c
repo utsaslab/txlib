@@ -10,10 +10,6 @@
 #include "txnlib.h"
 
 #define NS 1000000000
-#define SHORT 10
-#define LONG 1000
-#define SMALL 4096 // 4 KB
-#define BIG 1073741824 // 1 GB
 
 static const char *working_file = "out/bench.file";
 static const char *working_backup = "out/bench.backup";
@@ -225,6 +221,76 @@ void renamebench()
         printf("============================================\n");
 }
 
+unsigned long multiremove(int count, int txn, int file)
+{
+        mkdir("out/remove", 0755);
+        char *paths[count];
+        for (int i = 0; i < count; i++) {
+                char *path = malloc(1024); // TODO: free later
+                sprintf(path, "out/remove/%d", i);
+                paths[i] = path;
+
+                if (file)
+                        close(open(path, O_CREAT, 0644));
+                else
+                        mkdir(path, 0755);
+        }
+
+        struct timeval start, finish;
+        {
+                gettimeofday(&start, NULL);
+                int txn_id = -1;
+                if (txn)
+                        txn_id = begin_txn();
+
+                for (int i = 0; i < count; i++)
+                        remove(paths[i]);
+
+                if (txn)
+                        end_txn(txn_id);
+                gettimeofday(&finish, NULL);
+        }
+
+        return time_passed(start, finish) / count;
+}
+
+void removebench()
+{
+        /**
+         * permutate:
+         *  - within/without txn
+         *  - file/directory
+         */
+        printf("  +++++++++++++++++++++++++++\n");
+        printf("  +  BENCHMARKING remove()  +\n");
+        printf("  +++++++++++++++++++++++++++\n");
+        printf(" - txn: within, without\n");
+        printf(" - type: file, directory\n");
+        printf("============================================\n");
+
+        unsigned long none_file, none_dir;
+        unsigned long txn_file, txn_dir;
+        int count = 1000;
+
+        printf("- > txnless:\n");
+        printf("- - > file: "); fflush(stdout);
+        none_file = multiremove(count, 0, 1);
+        printf("%lds %ldns\n", none_file / NS, none_file % NS);
+        printf("- - > dir:  "); fflush(stdout);
+        none_dir = multiremove(count, 0, 0);
+        printf("%lds %ldns\n", none_dir / NS, none_dir % NS);
+
+        printf("- > txnl:\n");
+        printf("- - > file: "); fflush(stdout);
+        txn_file = multiremove(count, 1, 1);
+        printf("%lds %ldns (overhead: %fx)\n", txn_file / NS, txn_file % NS, (double) txn_file / none_file);
+        printf("- - > dir:  "); fflush(stdout);
+        txn_dir = multiremove(count, 1, 0);
+        printf("%lds %ldns (overhead: %fx)\n", txn_dir / NS, txn_dir % NS, (double) txn_dir / none_dir);
+
+        printf("============================================\n");
+}
+
 unsigned long multiwrite(int buf_size, int count, int txn, int length, int starting_size, int offset)
 {
         char cmd[1024];
@@ -269,7 +335,7 @@ unsigned long multiwrite(int buf_size, int count, int txn, int length, int start
         return time_passed(start, finish) / count;
 }
 
-void writebench(int shrt, int lng, int small, int big)
+void writebench()
 {
         /**
          * permutate:
@@ -277,6 +343,9 @@ void writebench(int shrt, int lng, int small, int big)
          *  - short/long sequence of fs ops
          *  - changing new/small/big file
          */
+
+        int shrt = 10, lng = 1000;
+        int small = 4096, big = 1073741824;
 
         printf("  ++++++++++++++++++++++++++\n");
         printf("  +  BENCHMARKING write()  +\n");
@@ -291,7 +360,7 @@ void writebench(int shrt, int lng, int small, int big)
         unsigned long txn_short_new, txn_short_small, txn_short_big;
         unsigned long txn_long_new, txn_long_small, txn_long_big;
         int buf_size = 64;
-        int count = 100;
+        int count = 50;
 
         printf("> txnless...\n");
 
@@ -353,7 +422,7 @@ int main()
          * 3 -> remove
          * 4 -> write
          */
-        int op = 2;
+        int op = 0;
 
         if (op == 0)
                 openbench();
@@ -361,8 +430,8 @@ int main()
                 mkdirbench();
         else if (op == 2)
                 renamebench();
-        // else if (op == 3)
-        //         removebench();
+        else if (op == 3)
+                removebench();
         else if (op == 4)
-                writebench(SHORT, LONG, SMALL, BIG);
+                writebench();
 }
