@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -197,11 +198,6 @@ unsigned long multiwrite(int buf_size, int count, int durability, int overwrite,
         unsigned long runtime = 0;
 
         for (int i = 0; i < count; i++) {
-                // if (i % 10 == 0) {
-                //         printf("%d ", i);
-                //         fflush(stdout);
-                // }
-
                 struct timeval start, finish;
                 if (!overwrite)
                         remove(working_file);
@@ -264,69 +260,69 @@ void writebench()
         printf("- > append...\n");
         printf("- - > single: "); fflush(stdout);
         mem_ap_single = multiwrite(buf_size, count, 0, 0, 1);
-        printf("%02lds %09ldns\n", mem_ap_single / NS, mem_ap_single % NS);
+        printf("%2lds %9ldns\n", mem_ap_single / NS, mem_ap_single % NS);
         printf("- - > short:  "); fflush(stdout);
         mem_ap_short = multiwrite(buf_size, count, 0, 0, shrt);
-        printf("%02lds %09ldns\n", mem_ap_short / NS, mem_ap_short % NS);
+        printf("%2lds %9ldns\n", mem_ap_short / NS, mem_ap_short % NS);
         printf("- - > long:   "); fflush(stdout);
         mem_ap_long = multiwrite(buf_size, count, 0, 0, lng);
-        printf("%02lds %09ldns\n", mem_ap_long / NS, mem_ap_long % NS);
+        printf("%2lds %9ldns\n", mem_ap_long / NS, mem_ap_long % NS);
         printf("- > overwrite...\n");
         printf("- - > single: "); fflush(stdout);
         mem_ow_single = multiwrite(buf_size, count, 0, 1, 1);
-        printf("%02lds %09ldns\n", mem_ow_single / NS, mem_ow_single % NS);
+        printf("%2lds %9ldns\n", mem_ow_single / NS, mem_ow_single % NS);
         printf("- - > short:  "); fflush(stdout);
         mem_ow_short = multiwrite(buf_size, count, 0, 1, shrt);
-        printf("%02lds %09ldns\n", mem_ow_short / NS, mem_ow_short % NS);
+        printf("%2lds %9ldns\n", mem_ow_short / NS, mem_ow_short % NS);
         printf("- - > long:   "); fflush(stdout);
         mem_ow_long = multiwrite(buf_size, count, 0, 1, lng);
-        printf("%02lds %09ldns\n", mem_ow_long / NS, mem_ow_long % NS);
+        printf("%2lds %9ldns\n", mem_ow_long / NS, mem_ow_long % NS);
 
         printf("> ending fsync()...\n");
 
         printf("- > append...\n");
         printf("- - > single: "); fflush(stdout);
         fsync_ap_single = multiwrite(buf_size, count, 1, 0, 1);
-        printf("%02lds %09ldns\n", fsync_ap_single / NS, fsync_ap_single % NS);
+        printf("%2lds %9ldns\n", fsync_ap_single / NS, fsync_ap_single % NS);
         printf("- - > short:  "); fflush(stdout);
         fsync_ap_short = multiwrite(buf_size, count, 1, 0, shrt);
-        printf("%02lds %09ldns\n", fsync_ap_short / NS, fsync_ap_short % NS);
+        printf("%2lds %9ldns\n", fsync_ap_short / NS, fsync_ap_short % NS);
         printf("- - > long:   "); fflush(stdout);
         fsync_ap_long = multiwrite(buf_size, count, 1, 0, lng);
-        printf("%02lds %09ldns\n", fsync_ap_long / NS, fsync_ap_long % NS);
+        printf("%2lds %9ldns\n", fsync_ap_long / NS, fsync_ap_long % NS);
         printf("- > overwrite...\n");
         printf("- - > single: "); fflush(stdout);
         fsync_ow_single = multiwrite(buf_size, count, 1, 1, 1);
-        printf("%02lds %09ldns\n", fsync_ow_single / NS, fsync_ow_single % NS);
+        printf("%2lds %9ldns\n", fsync_ow_single / NS, fsync_ow_single % NS);
         printf("- - > short:  "); fflush(stdout);
         fsync_ow_short = multiwrite(buf_size, count, 1, 1, shrt);
-        printf("%02lds %09ldns\n", fsync_ow_short / NS, fsync_ow_short % NS);
+        printf("%2lds %9ldns\n", fsync_ow_short / NS, fsync_ow_short % NS);
         printf("- - > long:   "); fflush(stdout);
         fsync_ow_long = multiwrite(buf_size, count, 1, 1, lng);
-        printf("%02lds %09ldns\n", fsync_ow_long / NS, fsync_ow_long % NS);
+        printf("%2lds %9ldns\n", fsync_ow_long / NS, fsync_ow_long % NS);
 
         printf("> transactional...\n");
 
         printf("- > append...\n");
         printf("- - > single: "); fflush(stdout);
         txn_ap_single = multiwrite(buf_size, count, 2, 0, 1);
-        printf("%02lds %09ldns (overhead: mem -> %4.2fx, fsync -> %4.2fx)\n", txn_ap_single / NS, txn_ap_single % NS, (double) txn_ap_single / mem_ap_single, (double) txn_ap_single / fsync_ap_single);
+        printf("%2lds %9ldns (overhead: mem -> %7.2fx, fsync -> %7.2fx)\n", txn_ap_single / NS, txn_ap_single % NS, (double) txn_ap_single / mem_ap_single, (double) txn_ap_single / fsync_ap_single);
         printf("- - > short:  "); fflush(stdout);
         txn_ap_short = multiwrite(buf_size, count, 2, 0, shrt);
-        printf("%02lds %09ldns (overhead: mem -> %4.2fx, fsync -> %4.2fx)\n", txn_ap_short / NS, txn_ap_short % NS, (double) txn_ap_short / mem_ap_short, (double) txn_ap_short / fsync_ap_short);
+        printf("%2lds %9ldns (overhead: mem -> %7.2fx, fsync -> %7.2fx)\n", txn_ap_short / NS, txn_ap_short % NS, (double) txn_ap_short / mem_ap_short, (double) txn_ap_short / fsync_ap_short);
         printf("- - > long:   "); fflush(stdout);
         txn_ap_long = multiwrite(buf_size, count, 2, 0, lng);
-        printf("%02lds %09ldns (overhead: mem -> %4.2fx, fsync -> %4.2fx)\n", txn_ap_long / NS, txn_ap_long % NS, (double) txn_ap_long / mem_ap_long, (double) txn_ap_long / fsync_ap_long);
+        printf("%2lds %9ldns (overhead: mem -> %7.2fx, fsync -> %7.2fx)\n", txn_ap_long / NS, txn_ap_long % NS, (double) txn_ap_long / mem_ap_long, (double) txn_ap_long / fsync_ap_long);
         printf("- > overwrite...\n");
         printf("- - > single: "); fflush(stdout);
         txn_ow_single = multiwrite(buf_size, count, 2, 1, 1);
-        printf("%02lds %09ldns (overhead: mem -> %4.2fx, fsync -> %4.2fx)\n", txn_ow_single / NS, txn_ow_single % NS, (double) txn_ow_single / mem_ow_single, (double) txn_ow_single / fsync_ow_single);
+        printf("%2lds %9ldns (overhead: mem -> %7.2fx, fsync -> %7.2fx)\n", txn_ow_single / NS, txn_ow_single % NS, (double) txn_ow_single / mem_ow_single, (double) txn_ow_single / fsync_ow_single);
         printf("- - > short:  "); fflush(stdout);
         txn_ow_short = multiwrite(buf_size, count, 2, 1, shrt);
-        printf("%02lds %09ldns (overhead: mem -> %4.2fx, fsync -> %4.2fx)\n", txn_ow_short / NS, txn_ow_short % NS, (double) txn_ow_short / mem_ow_short, (double) txn_ow_short / fsync_ow_short);
+        printf("%2lds %9ldns (overhead: mem -> %7.2fx, fsync -> %7.2fx)\n", txn_ow_short / NS, txn_ow_short % NS, (double) txn_ow_short / mem_ow_short, (double) txn_ow_short / fsync_ow_short);
         printf("- - > long:   "); fflush(stdout);
         txn_ow_long = multiwrite(buf_size, count, 2, 1, lng);
-        printf("%02lds %09ldns (overhead: mem -> %4.2fx, fsync -> %4.2fx)\n", txn_ow_long / NS, txn_ow_long % NS, (double) txn_ow_long / mem_ow_long, (double) txn_ow_long / fsync_ow_long);
+        printf("%2lds %9ldns (overhead: mem -> %7.2fx, fsync -> %7.2fx)\n", txn_ow_long / NS, txn_ow_long % NS, (double) txn_ow_long / mem_ow_long, (double) txn_ow_long / fsync_ow_long);
 
         printf("============================================\n");
 }
@@ -391,10 +387,10 @@ int cp(const char *to, const char *from)
     return -1;
 }
 
-unsigned long multiswap(int buf_size, int count, int txn, int filesize, int writes)
+unsigned long multiswap(int buf_size, int count, int txn, unsigned long filesize, int writes)
 {
         char cmd[1024];
-        sprintf(cmd, "dd if=/dev/zero of=%s count=%d bs=%d > /dev/null 2>&1", working_file, filesize / 1024, 1024);
+        sprintf(cmd, "dd if=/dev/zero of=%s count=%ld bs=%d > /dev/null 2>&1", working_file, filesize / 1024, 1024);
         set_bypass(1);
         system(cmd);
         set_bypass(0);
@@ -437,47 +433,44 @@ unsigned long multiswap(int buf_size, int count, int txn, int filesize, int writ
 void swapbench()
 {
         // compare to copy-write-then-rename method
-        int small = 4 * KB;
-        int medium = 4 * MB;
-        int large = 1 * GB;
+        int range = 25; // max 2^30 filesize (start at 6)
+        unsigned long filesizes[range];
+        for (int i = 0; i < range; i++)
+                filesizes[i] = (unsigned long) pow(2, 6+i);
 
         printf("  ++++++++++++++++++++++++++\n");
         printf("  +  Testing alternatives  +\n");
         printf("  ++++++++++++++++++++++++++\n");
         printf(" - method: swap, txn\n");
-        printf(" - filesize: small -> %d, medium -> %d, large -> %d\n", small, medium, large);
+        printf(" - filesize: multiples of 2 from %ld to %ld\n", filesizes[0], filesizes[range-1]);
         printf("============================================\n");
 
-        unsigned long swap_small, swap_medium, swap_large;
-        unsigned long txn_small, txn_medium, txn_large;
-        int buf_size = 512;
-        int count = 25;
+        unsigned long swap_times[range];
+        unsigned long txn_times[range];
+        int max_buf_size = 4 * KB;
+        int count = 50;
 
         printf("> swap...\n");
 
-        printf("- > small:  "); fflush(stdout);
-        swap_small = multiswap(buf_size, count, 0, small, 2);
-        printf("%02lds %09ldns\n", swap_small / NS, swap_small % NS);
-        printf("- > medium: "); fflush(stdout);
-        swap_medium = multiswap(buf_size, count, 0, medium, 8);
-        printf("%02lds %09ldns\n", swap_medium / NS, swap_medium % NS);
-        printf("- > large:  "); fflush(stdout);
-        swap_large = multiswap(buf_size, count, 0, large, 32);
-        printf("%02lds %09ldns\n", swap_large / NS, swap_large % NS);
+        for (int i = 0; i < range; i++) {
+                printf("- > 2^%2d: ", i+6); fflush(stdout);
+                int buf_size = filesizes[i] / 16;
+                if (buf_size > max_buf_size)
+                        buf_size = max_buf_size;
+                swap_times[i] = multiswap(buf_size, count, 0, filesizes[i], 16);
+                printf("%2lds %9ldns\n", swap_times[i] / NS, swap_times[i] % NS);
+        }
 
         printf("> txn...\n");
 
-        printf("- > small:  "); fflush(stdout);
-        txn_small = multiswap(buf_size, count, 1, small, 2);
-        printf("%02lds %09ldns (overhead: %4.2fx)\n", txn_small / NS, txn_small % NS, (double) txn_small / swap_small);
-        printf("- > medium: "); fflush(stdout);
-        txn_medium = multiswap(buf_size, count, 1, medium, 8);
-        printf("%02lds %09ldns (overhead: %4.2fx)\n", txn_medium / NS, txn_medium % NS, (double) txn_medium / swap_medium);
-        printf("- > large:  "); fflush(stdout);
-        txn_large = multiswap(buf_size, count, 1, large, 32);
-        printf("%02lds %09ldns (overhead: %4.2fx)\n", txn_large / NS, txn_large % NS, (double) txn_large / swap_large);
-
-        printf("============================================\n");
+        for (int i = 0; i < range; i++) {
+                printf("- > 2^%2d: ", i+6); fflush(stdout);
+                int buf_size = filesizes[i] / 16;
+                if (buf_size > max_buf_size)
+                        buf_size = max_buf_size;
+                txn_times[i] = multiswap(buf_size, count, 1, filesizes[i], 8);
+                printf("%2lds %9ldns (overhead: %6.3fx)\n", txn_times[i] / NS, txn_times[i] % NS, (double) txn_times[i] / swap_times[i]);
+        }
 }
 
 int main()

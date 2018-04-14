@@ -41,7 +41,7 @@ crash-recovery:
 
 benchmark:
 	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
-	gcc tests/benchmark.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/benchmark -ldl && \
+	gcc tests/benchmark.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/benchmark -ldl -lm && \
 	LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./$(OUTDIR)/benchmark $(BENCHMARKFLAGS) \
 
 fsx:
