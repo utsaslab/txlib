@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,6 +10,8 @@
 
 #include "txnlib.h"
 
+#define KB 1024
+#define MB 1048576
 #define GB 1073741824
 #define NS 1000000000
 
@@ -178,7 +181,7 @@ void removebench()
         printf("============================================\n");
 }
 
-// durability: 0 -> none, 1 -> fsync, 2 -> txn
+// durability: 0 -> none, 1 -> fsync, 2 -> txn, 3 -> txn
 unsigned long multiwrite(int buf_size, int count, int durability, int overwrite, int length)
 {
         if (overwrite) {
@@ -210,11 +213,11 @@ unsigned long multiwrite(int buf_size, int count, int durability, int overwrite,
                         if (durability == 2)
                                 txn_id = begin_txn();
 
-                        for (int j = 0; j < length; j++) {
+                        for (int j = 0; j < length; j++)
                                 write(fd, buf, buf_size);
-                                if (durability == 1)
-                                        fsync(fd);
-                        }
+
+                        if (durability == 1)
+                                fsync(fd);
 
                         if (durability == 2)
                                 end_txn(txn_id);
@@ -238,7 +241,6 @@ void writebench()
          */
 
         int shrt = 10, lng = 1000;
-        int gb = 1073741824;
 
         printf("  ++++++++++++++++++++++++++\n");
         printf("  +  BENCHMARKING write()  +\n");
@@ -329,14 +331,164 @@ void writebench()
         printf("============================================\n");
 }
 
+// https://stackoverflow.com/questions/2180079/how-can-i-copy-a-file-on-unix-using-c
+int cp(const char *to, const char *from)
+{
+    int fd_to, fd_from;
+    char buf[4096];
+    ssize_t nread;
+    int saved_errno;
+
+    fd_from = open(from, O_RDONLY);
+    if (fd_from < 0)
+        return -1;
+
+    fd_to = open(to, O_WRONLY | O_CREAT | O_EXCL, 0666);
+    if (fd_to < 0)
+        goto out_error;
+
+    while (nread = read(fd_from, buf, sizeof buf), nread > 0)
+    {
+        char *out_ptr = buf;
+        ssize_t nwritten;
+
+        do {
+            nwritten = write(fd_to, out_ptr, nread);
+
+            if (nwritten >= 0)
+            {
+                nread -= nwritten;
+                out_ptr += nwritten;
+            }
+            else if (errno != EINTR)
+            {
+                goto out_error;
+            }
+        } while (nread > 0);
+    }
+
+    if (nread == 0)
+    {
+        if (close(fd_to) < 0)
+        {
+            fd_to = -1;
+            goto out_error;
+        }
+        close(fd_from);
+
+        /* Success! */
+        return 0;
+    }
+
+  out_error:
+    saved_errno = errno;
+
+    close(fd_from);
+    if (fd_to >= 0)
+        close(fd_to);
+
+    errno = saved_errno;
+    return -1;
+}
+
+unsigned long multiswap(int buf_size, int count, int txn, int filesize, int writes)
+{
+        char cmd[1024];
+        sprintf(cmd, "dd if=/dev/zero of=%s count=%d bs=%d > /dev/null 2>&1", working_file, filesize / 1024, 1024);
+        set_bypass(1);
+        system(cmd);
+        set_bypass(0);
+
+        char buf[buf_size];
+        memset(buf, '1', buf_size);
+        unsigned long runtime = 0;
+
+        for (int i = 0; i < count; i++) {
+                struct timeval start, finish;
+
+                gettimeofday(&start, NULL);
+                int fd = -1, txn_id = -1;
+                if (txn) {
+                        txn_id = begin_txn();
+                        fd = open(working_file, O_RDWR);
+                } else {
+                        cp(working_backup, working_file);
+                        fd = open(working_backup, O_RDWR);
+                }
+
+                for (int j = 0; j < writes; j++) {
+                        lseek(fd, j*(filesize / writes), SEEK_SET);
+                        write(fd, buf, buf_size);
+                }
+
+                if (txn) {
+                        end_txn(txn_id);
+                } else {
+                        fsync(fd);
+                        rename(working_backup, working_file);
+                }
+                close(fd);
+                gettimeofday(&finish, NULL);
+                runtime += time_passed(start, finish);
+        }
+        return runtime / count;
+}
+
+void swapbench()
+{
+        // compare to copy-write-then-rename method
+        int small = 4 * KB;
+        int medium = 4 * MB;
+        int large = 1 * GB;
+
+        printf("  ++++++++++++++++++++++++++\n");
+        printf("  +  Testing alternatives  +\n");
+        printf("  ++++++++++++++++++++++++++\n");
+        printf(" - method: swap, txn\n");
+        printf(" - filesize: small -> %d, medium -> %d, large -> %d\n", small, medium, large);
+        printf("============================================\n");
+
+        unsigned long swap_small, swap_medium, swap_large;
+        unsigned long txn_small, txn_medium, txn_large;
+        int buf_size = 512;
+        int count = 25;
+
+        printf("> swap...\n");
+
+        printf("- > small:  "); fflush(stdout);
+        swap_small = multiswap(buf_size, count, 0, small, 2);
+        printf("%02lds %09ldns\n", swap_small / NS, swap_small % NS);
+        printf("- > medium: "); fflush(stdout);
+        swap_medium = multiswap(buf_size, count, 0, medium, 8);
+        printf("%02lds %09ldns\n", swap_medium / NS, swap_medium % NS);
+        printf("- > large:  "); fflush(stdout);
+        swap_large = multiswap(buf_size, count, 0, large, 32);
+        printf("%02lds %09ldns\n", swap_large / NS, swap_large % NS);
+
+        printf("> txn...\n");
+
+        printf("- > small:  "); fflush(stdout);
+        txn_small = multiswap(buf_size, count, 1, small, 2);
+        printf("%02lds %09ldns (overhead: %4.2fx)\n", txn_small / NS, txn_small % NS, (double) txn_small / swap_small);
+        printf("- > medium: "); fflush(stdout);
+        txn_medium = multiswap(buf_size, count, 1, medium, 8);
+        printf("%02lds %09ldns (overhead: %4.2fx)\n", txn_medium / NS, txn_medium % NS, (double) txn_medium / swap_medium);
+        printf("- > large:  "); fflush(stdout);
+        txn_large = multiswap(buf_size, count, 1, large, 32);
+        printf("%02lds %09ldns (overhead: %4.2fx)\n", txn_large / NS, txn_large % NS, (double) txn_large / swap_large);
+
+        printf("============================================\n");
+}
+
 int main()
 {
         /**
          * 0 -> open
          * 1 -> remove
          * 2 -> write
+         * 3 -> swap
          */
-        int op = 2;
+        int op = 3;
 
         if (op == 0)
                 openbench();
@@ -344,4 +496,8 @@ int main()
                 removebench();
         else if (op == 2)
                 writebench();
+        else if (op == 3)
+                swapbench();
+        else
+                printf("nothing tested\n");
 }
