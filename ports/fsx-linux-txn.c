@@ -1071,8 +1071,12 @@ main(int argc, char **argv)
 
 	gettimeofday(&start, NULL);
 
+	int txn_id = begin_txn();
+
 	for (int i = 0; i < numops; i++)
 		test();
+
+	end_txn(txn_id);
 
 	gettimeofday(&finish, NULL);
 	printf("%ld\n", time_passed(start, finish));
@@ -1104,8 +1108,12 @@ main(int argc, char **argv)
 
 	gettimeofday(&start, NULL);
 
+	txn_id = begin_txn();
+
 	for (int i = 0; i < numops; i++)
 		test();
+
+	end_txn(txn_id);
 
 	gettimeofday(&finish, NULL);
 	printf("%ld\n", time_passed(start, finish));

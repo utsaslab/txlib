@@ -215,7 +215,7 @@ int undo_write(const char *path, int pos, int range, int prev_size, const char *
 {
 	char *saved = malloc(range);
 	int bup = glibc_open(backup, O_RDWR);
-	ssize_t bupped = glibc_read(bup, saved, range);
+	glibc_read(bup, saved, range);
 	close(bup);
 
 	int dirty = glibc_open(path, O_RDWR);

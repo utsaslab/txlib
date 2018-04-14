@@ -237,7 +237,7 @@ void writebench()
          *  - single/short/long sequence of fs ops
          */
 
-        int shrt = 10, lng = 500;
+        int shrt = 10, lng = 1000;
         int gb = 1073741824;
 
         printf("  ++++++++++++++++++++++++++\n");
@@ -336,7 +336,7 @@ int main()
          * 1 -> remove
          * 2 -> write
          */
-        int op = 4;
+        int op = 2;
 
         if (op == 0)
                 openbench();

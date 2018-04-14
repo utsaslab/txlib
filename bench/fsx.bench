@@ -1,0 +1,7 @@
+writes:
+  mem -> 00s 728399000ns
+  txn -> 01s 922564896ns (overhead: 2.64x)
+truncates:
+  mem -> 00s 082082000ns
+  txn -> 02s 028292072ns (overhead: 24.71x)
+

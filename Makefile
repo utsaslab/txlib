@@ -49,5 +49,15 @@ fsx:
 	gcc ports/fsx-linux.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/fsx -ldl && \
 	LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./$(OUTDIR)/fsx $(OUTDIR)/temp.txt $(FSXFLAGS) \
 
+fsx-txn:
+	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
+	gcc ports/fsx-linux-txn.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/fsxt -ldl && \
+	LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./$(OUTDIR)/fsxt $(OUTDIR)/temp.txt $(FSXFLAGS) \
+
+fsx-bench:
+	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
+	gcc ports/fsx-bench.c -o $(OUTDIR)/fsxb && \
+	./$(OUTDIR)/fsxb \
+
 clean:
 	rm -rf libtxn.so logs/ $(OUTDIR)/
