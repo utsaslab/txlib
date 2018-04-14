@@ -3,33 +3,33 @@
   ++++++++++++++++++++++++++
  - fs ops: memory, fsync, txn
  - file: append, overwrite
- - length: single -> 1, short -> 10, long -> 500
+ - length: single -> 1, short -> 10, long -> 1000
 ============================================
 > in memory...
 - > append...
-- - > single: 00s 000004250ns
-- - > short:  00s 000023600ns
-- - > long:   00s 001143500ns
+- - > single:  0s      7550ns
+- - > short:   0s     37000ns
+- - > long:    0s   3190600ns
 - > overwrite...
-- - > single: 00s 000002300ns
-- - > short:  00s 000060850ns
-- - > long:   00s 002320850ns
+- - > single:  0s      5000ns
+- - > short:   0s     66400ns
+- - > long:    0s   5779900ns
 > ending fsync()...
 - > append...
-- - > single: 00s 004680500ns
-- - > short:  00s 046643300ns
-- - > long:   02s 389848850ns
+- - > single:  0s   4602000ns
+- - > short:   0s   4740350ns
+- - > long:    0s   9876850ns
 - > overwrite...
-- - > single: 00s 007222600ns
-- - > short:  00s 049063200ns
-- - > long:   02s 462320400ns
+- - > single:  0s   7249600ns
+- - > short:   0s   4716350ns
+- - > long:    0s  10388650ns
 > transactional...
 - > append...
-- - > single: 00s 019252250ns (overhead: mem -> 4529.94x, fsync -> 4.11x)
-- - > short:  00s 104156100ns (overhead: mem -> 4413.39x, fsync -> 2.23x)
-- - > long:   04s 924301000ns (overhead: mem -> 4306.34x, fsync -> 2.06x)
+- - > single:  0s  15863350ns (overhead: mem -> 2101.11x, fsync ->    3.45x)
+- - > short:   0s  86748500ns (overhead: mem -> 2344.55x, fsync ->   18.30x)
+- - > long:    9s 893815800ns (overhead: mem -> 3100.93x, fsync -> 1001.72x)
 - > overwrite...
-- - > single: 00s 019442300ns (overhead: mem -> 8453.17x, fsync -> 2.69x)
-- - > short:  00s 107547550ns (overhead: mem -> 1767.42x, fsync -> 2.19x)
-- - > long:   04s 975225450ns (overhead: mem -> 2143.71x, fsync -> 2.02x)
+- - > single:  0s  30253600ns (overhead: mem -> 6050.72x, fsync ->    4.17x)
+- - > short:   0s 112544650ns (overhead: mem -> 1694.95x, fsync ->   23.86x)
+- - > long:   10s  84417000ns (overhead: mem -> 1744.74x, fsync ->  970.71x)
 ============================================
