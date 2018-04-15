@@ -28,90 +28,6 @@ unsigned long time_passed(struct timeval start, struct timeval finish)
         return passed;
 }
 
-unsigned long multiopen(int count, int txn, int create)
-{
-        struct timeval start, finish;
-
-        mkdir("out/open", 0755);
-        char *files[count]; // TODO: free later
-        for (int i = 0; i < count; i++) {
-                char *f = malloc(32);
-                sprintf(f, "out/open/%d.txt", i);
-                files[i] = f;
-        }
-
-        set_bypass(1);
-        system("rm -f out/open/*");
-        set_bypass(0);
-
-        if (!create)
-                for (int i = 0; i < count; i++)
-                        close(open(files[i], O_CREAT, 0644));
-
-        int flags = O_RDWR;
-        if (create)
-                flags |= O_CREAT;
-        int first, last;
-
-        {
-                gettimeofday(&start, NULL);
-                int txn_id = -1;
-                if (txn)
-                        txn_id = begin_txn();
-
-                first = open(files[0], flags, 0644);
-                for (int i = 1; i < count; i++)
-                        last = open(files[i], flags, 0644);
-
-                if (txn)
-                        end_txn(txn_id);
-                gettimeofday(&finish, NULL);
-        }
-
-        for (int i = first; i <= last; i++)
-                close(i);
-
-        return time_passed(start, finish) / count;
-}
-
-void openbench()
-{
-        /**
-         * permutate:
-         *  - within/without txn
-         *  - creating/existing file
-         */
-
-         printf("  +++++++++++++++++++++++++\n");
-         printf("  +  BENCHMARKING open()  +\n");
-         printf("  +++++++++++++++++++++++++\n");
-         printf(" - txn: within, without\n");
-         printf(" - file: create, existing\n");
-         printf("============================================\n");
-
-         unsigned long none_create, none_existing;
-         unsigned long txn_create, txn_existing;
-         int count = 1000;
-
-         printf("- > txnless\n");
-         printf("- - > creating file: "); fflush(stdout);
-         none_create = multiopen(count, 0, 1);
-         printf("%lds %ldns\n", none_create / NS, none_create % NS);
-         printf("- - > existing file: "); fflush(stdout);
-         none_existing = multiopen(count, 0, 0);
-         printf("%lds %ldns\n", none_existing / NS, none_existing % NS);
-
-         printf("- > txnl\n");
-         printf("- - > creating file: "); fflush(stdout);
-         txn_create = multiopen(count, 1, 1);
-         printf("%lds %ldns (overhead: %fx)\n", txn_create / NS, txn_create % NS, (double) txn_create / none_create);
-         printf("- - > existing file: "); fflush(stdout);
-         txn_existing = multiopen(count, 1, 0);
-         printf("%lds %ldns (overhead: %fx)\n", txn_existing / NS, txn_existing % NS, (double) txn_existing / none_existing);
-
-         printf("============================================\n");
-}
-
 unsigned long multiremove(int count, int txn, int file)
 {
         mkdir("out/remove", 0755);
@@ -145,6 +61,7 @@ unsigned long multiremove(int count, int txn, int file)
         return time_passed(start, finish) / count;
 }
 
+// keep this as benchmark for super simple endpoint
 void removebench()
 {
         /**
@@ -182,7 +99,7 @@ void removebench()
         printf("============================================\n");
 }
 
-// durability: 0 -> none, 1 -> fsync, 2 -> txn, 3 -> txn
+// durability: 0 -> none, 1 -> fsync, 2 -> txn
 unsigned long multiwrite(int buf_size, int count, int durability, int overwrite, int length)
 {
         if (overwrite) {
@@ -193,14 +110,16 @@ unsigned long multiwrite(int buf_size, int count, int durability, int overwrite,
                 set_bypass(0);
         }
 
-        char buf[buf_size];
-        memset(buf, '1', buf_size);
-        unsigned long runtime = 0;
 
+        unsigned long runtime = 0;
         for (int i = 0; i < count; i++) {
                 struct timeval start, finish;
                 if (!overwrite)
                         remove(working_file);
+
+                // change the buffer each time just in case
+                char buf[buf_size];
+                memset(buf, i+'0', buf_size);
 
                 int fd = open(working_file, O_CREAT | O_RDWR, 0644);
                 {
@@ -236,11 +155,14 @@ void writebench()
          *  - single/short/long sequence of fs ops
          */
 
-        int shrt = 10, lng = 1000;
+        int shrt = 10, lng = 100;
+        int buf_size = 128;
+        int count = 10000;
 
         printf("  ++++++++++++++++++++++++++\n");
         printf("  +  BENCHMARKING write()  +\n");
         printf("  ++++++++++++++++++++++++++\n");
+        printf(" - count: %d\n", count);
         printf(" - fs ops: memory, fsync, txn\n");
         printf(" - file: append, overwrite\n");
         printf(" - length: single -> %d, short -> %d, long -> %d\n", 1, shrt, lng);
@@ -252,8 +174,6 @@ void writebench()
         unsigned long fsync_ow_single, fsync_ow_short, fsync_ow_long;
         unsigned long txn_ap_single, txn_ap_short, txn_ap_long;
         unsigned long txn_ow_single, txn_ow_short, txn_ow_long;
-        int buf_size = 128;
-        int count = 20;
 
         printf("> in memory...\n");
 
@@ -311,7 +231,7 @@ void writebench()
         txn_ap_short = multiwrite(buf_size, count, 2, 0, shrt);
         printf("%2lds %9ldns (overhead: mem -> %7.2fx, fsync -> %7.2fx)\n", txn_ap_short / NS, txn_ap_short % NS, (double) txn_ap_short / mem_ap_short, (double) txn_ap_short / fsync_ap_short);
         printf("- - > long:   "); fflush(stdout);
-        txn_ap_long = multiwrite(buf_size, count, 2, 0, lng);
+        txn_ap_long = multiwrite(buf_size, count / 10, 2, 0, lng);
         printf("%2lds %9ldns (overhead: mem -> %7.2fx, fsync -> %7.2fx)\n", txn_ap_long / NS, txn_ap_long % NS, (double) txn_ap_long / mem_ap_long, (double) txn_ap_long / fsync_ap_long);
         printf("- > overwrite...\n");
         printf("- - > single: "); fflush(stdout);
@@ -321,7 +241,7 @@ void writebench()
         txn_ow_short = multiwrite(buf_size, count, 2, 1, shrt);
         printf("%2lds %9ldns (overhead: mem -> %7.2fx, fsync -> %7.2fx)\n", txn_ow_short / NS, txn_ow_short % NS, (double) txn_ow_short / mem_ow_short, (double) txn_ow_short / fsync_ow_short);
         printf("- - > long:   "); fflush(stdout);
-        txn_ow_long = multiwrite(buf_size, count, 2, 1, lng);
+        txn_ow_long = multiwrite(buf_size, count / 10, 2, 1, lng);
         printf("%2lds %9ldns (overhead: mem -> %7.2fx, fsync -> %7.2fx)\n", txn_ow_long / NS, txn_ow_long % NS, (double) txn_ow_long / mem_ow_long, (double) txn_ow_long / fsync_ow_long);
 
         printf("============================================\n");
@@ -433,6 +353,8 @@ unsigned long multiswap(int buf_size, int count, int txn, unsigned long filesize
 void swapbench()
 {
         // compare to copy-write-then-rename method
+        int count = 50;
+        int max_buf_size = 4 * KB;
         int range = 25; // max 2^30 filesize (start at 6)
         unsigned long filesizes[range];
         for (int i = 0; i < range; i++)
@@ -441,14 +363,14 @@ void swapbench()
         printf("  ++++++++++++++++++++++++++\n");
         printf("  +  Testing alternatives  +\n");
         printf("  ++++++++++++++++++++++++++\n");
+        printf(" - count: %d\n", count);
         printf(" - method: swap, txn\n");
         printf(" - filesize: multiples of 2 from %ld to %ld\n", filesizes[0], filesizes[range-1]);
         printf("============================================\n");
 
         unsigned long swap_times[range];
         unsigned long txn_times[range];
-        int max_buf_size = 4 * KB;
-        int count = 50;
+
 
         printf("> swap...\n");
 
@@ -481,15 +403,13 @@ int main()
          * 2 -> write
          * 3 -> swap
          */
-        int op = 3;
+        int op = 2;
 
         if (op == 0)
-                openbench();
-        else if (op == 1)
                 removebench();
-        else if (op == 2)
+        else if (op == 1)
                 writebench();
-        else if (op == 3)
+        else if (op == 2)
                 swapbench();
         else
                 printf("nothing tested\n");
