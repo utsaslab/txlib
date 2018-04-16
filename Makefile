@@ -1,6 +1,7 @@
 CFLAGS = -Wall
 BENCHDIR = bench
 LIBDIR = lib
+LOGDIR = /var/tmp/txnlib-logs
 OUTDIR = out
 TESTDIR = tests
 BENCHMARKFLAGS =
@@ -18,7 +19,7 @@ txnlib.so:
 test:
 	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
 	for i in `basename -a $(TESTDIR)/test*.c | grep -Eo "[0-9]{1,4}"`; do \
-		(rm -rf logs/*; \
+		(rm -rf $(LOGDIR)/*; \
 		gcc $(TESTDIR)/test$$i.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/test$$i -ldl && \
 		LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./$(OUTDIR)/test$$i && \
 		diff $(TESTDIR)/test$$i.ok $(OUTDIR)/test$$i.out > $(OUTDIR)/test$$i.diff && \
@@ -61,4 +62,4 @@ fsx-bench:
 	./$(OUTDIR)/fsxb \
 
 clean:
-	rm -rf libtxn.so logs/ $(OUTDIR)/
+	rm -rf libtxn.so $(LOGDIR)/ $(OUTDIR)/

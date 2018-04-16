@@ -19,20 +19,19 @@ static int (*glibc_open)(const char *pathname, int flags, ...);
 static int (*glibc_mkdir)(const char *pathname, mode_t mode);
 static int (*glibc_rename)(const char *oldpath, const char *newpath);
 static int (*glibc_remove)(const char *pathname);
-static ssize_t (*glibc_read)(int fd, void *buf, size_t count);
 static ssize_t (*glibc_write)(int fd, const void *buf, size_t count);
 static int (*glibc_ftruncate)(int fd, off_t length);
 
 static int init = 0;
 static int keep_log = 0;
-static int next_id = 0;; // TODO: prevent overflow
-static int backup_id = 0;
-static const char *log_dir = "logs";
-static const char *undo_log = "logs/undo_log";
-static const char *reversed_log = "logs/reversed_log";
-static const char *bypass = "logs/bypass"; // prevent issues when using system()
+static int next_id = 0; // TODO: prevent overflow
+static int backup_id = 0; // TODO: prevent overflow
+static const char *log_dir = "/var/tmp/txnlib-logs";
+static const char *undo_log = "/var/tmp/txnlib-logs/undo_log";
+static const char *recovered_undo_log = "/var/tmp/txnlib-logs/recovered_undo_log";
+static const char *reversed_log = "/var/tmp/txnlib-logs/reversed_log";
+static const char *bypass = "/var/tmp/txnlib-logs/bypass"; // prevent issues when using system()
 static struct txn *cur_txn = NULL;
-static struct file_node *logged = NULL;
 
 // ========== helper methods ==========
 
@@ -44,7 +43,6 @@ void initialize()
 	glibc_mkdir = dlsym(RTLD_NEXT, "mkdir");
 	glibc_rename = dlsym(RTLD_NEXT, "rename");
 	glibc_remove = dlsym(RTLD_NEXT, "remove");
-	glibc_read = dlsym(RTLD_NEXT, "read");
 	glibc_write = dlsym(RTLD_NEXT, "write");
 	glibc_ftruncate = dlsym(RTLD_NEXT, "ftruncate");
 
@@ -96,35 +94,10 @@ char *realpath_missing(const char *path)
 char *get_path_from_fd(int fd)
 {
 	char *path = calloc(4096, 1);
-	char link[4096];
+	char link[128];
 	sprintf(link, "/proc/self/fd/%d", fd);
 	readlink(link, path, 4096);
 	return path;
-}
-
-void add_to_logged(const char *name)
-{
-	char *rp = realpath_missing(name);
-	struct file_node *fn = malloc(sizeof(struct file_node));
-	sprintf(fn->name, "%s", rp);
-	free(rp);
-	fn->next = logged;
-	logged = fn;
-}
-
-int already_logged(const char *name)
-{
-	char *rp = realpath_missing(name);
-	struct file_node *fn = logged;
-	while (fn) {
-		if (strcmp(logged->name, rp) == 0) {
-			free(rp);
-			return 1;
-		}
-		fn = fn->next;
-	}
-	free(rp);
-	return 0;
 }
 
 // custom implementation of parsing undo logs
@@ -147,25 +120,22 @@ void generate_reversed_log()
 	int rev = glibc_open(reversed_log, O_CREAT | O_RDWR | O_TRUNC, 0644);
 	for (int i = num_lines; i > 0; i--) {
 		rewind(fptr);
-		char entry[4096];
-		for (int j = 0; j < i; j++) {
-			memset(entry, 0, sizeof(entry));
+		char entry[8192];
+		for (int j = 0; j < i-1; j++)
 			fgets(entry, sizeof(entry), fptr);
-		}
+		memset(entry, 0, sizeof(entry)); // zero entry just in case
+		fgets(entry, sizeof(entry), fptr);
 		glibc_write(rev, entry, strlen(entry));
 	}
-	fclose(fptr);
 	close(rev);
+	fclose(fptr);
 	set_bypass(0);
 }
 
 off_t filesize(const char *path)
 {
 	struct stat metadata;
-	if (stat(path, &metadata) == 0)
-		return metadata.st_size;
-	else
-		return -1;
+	return (stat(path, &metadata) == 0) ? metadata.st_size : -1;
 }
 
 void copy(const char *dest, const char *src)
@@ -183,12 +153,7 @@ void copy(const char *dest, const char *src)
 
 // ========== testing ==========
 
-void crash()
-{
-	close(glibc_open("logs/crashed", O_CREAT, 0644));
-	cur_txn = NULL;
-	logged = NULL;
-}
+void crash() { cur_txn = NULL; }
 
 // ========== vanilla log recovery methods ==========
 
@@ -199,10 +164,8 @@ int undo_create(const char *path)
 
 int undo_remove(const char *path, const char *backup)
 {
-	char cp[4096];
-	sprintf(cp, "%s.copy", backup);
-	copy(cp, backup);
-	return glibc_rename(cp, path);
+	copy(path, backup);
+	return 0;
 }
 
 int undo_rename(const char *old, const char *new)
@@ -212,15 +175,16 @@ int undo_rename(const char *old, const char *new)
 
 int undo_write(const char *path, int pos, int range, int prev_size, const char *backup)
 {
-	char *saved = malloc(range);
-	int bup = glibc_open(backup, O_RDWR);
-	glibc_read(bup, saved, range);
-	close(bup);
-
 	int dirty = glibc_open(path, O_RDWR);
 	if (dirty == -1) // okay if file doesn't exist bc may have crashed during recovery
 		return -1;
 	lseek(dirty, pos, SEEK_SET);
+
+	char *saved = malloc(range);
+	int bup = glibc_open(backup, O_RDWR);
+	read(bup, saved, range);
+	close(bup);
+
 	ssize_t restored = glibc_write(dirty, saved, range);
 	glibc_ftruncate(dirty, prev_size);
 	close(dirty);
@@ -256,9 +220,12 @@ int undo_touch(const char *path, const char *metadata)
 	int mtim_usec = atoi(nexttok(NULL)) % 1000;
 	fclose(md);
 
+	if (access(path, F_OK))
+		return -1;
+
 	int err = chmod(path, mode);
 	if (err) {
-		// printf("Error restoring mode in undo_touch(). (%s)\n", strerror(errno));
+		printf("Error restoring mode in undo_touch(). (%s)\n", strerror(errno));
 		return -1;
 	}
 	err = chown(path, user, group);
@@ -303,7 +270,7 @@ int recover_log()
 			undo_remove(path, backup);
 		} else if (strcmp("rename", op) == 0) {
 			char *old = nexttok(NULL);
-			char *new = strtok(nexttok(NULL), "\n");
+			char *new = strtok(nexttok(NULL), "\n"); // newline
 			undo_rename(old, new);
 		} else if (strcmp("write", op) == 0) {
 			char *path = nexttok(NULL);
@@ -314,9 +281,9 @@ int recover_log()
 			undo_write(path, pos, range, size, backup);
 		} else if (strcmp("touch", op) == 0) {
 			char *path = nexttok(NULL);
-			char *metadata = strtok(nexttok(NULL), "\n");
+			char *metadata = strtok(nexttok(NULL), "\n"); // newline
 			undo_touch(path, metadata);
-		} else if (!op) { // TODO: why is op sometimes null?
+		} else if (!op) {
 			printf("Operation is null in recover_log().\n");
 			break;
 		}
@@ -335,8 +302,12 @@ int begin_txn(void)
 	recover();
 
 	if (!cur_txn) { // beginning transaction
+
+		// clean up workspace
+		char cmd[1024];
+		sprintf(cmd, "rm -rf %s", log_dir);
 		set_bypass(1);
-		system("rm -rf logs");
+		system(cmd);
 		set_bypass(0);
 
 		int err = glibc_mkdir(log_dir, 0777);
@@ -363,7 +334,8 @@ int begin_txn(void)
 
 int end_txn(int txn_id)
 {
-	// TODO: should this be allowed?
+	// should this be allowed? yes, bc we do not provide isolation
+	// TODO: allow later
 	if (txn_id != cur_txn->id) {
 		printf("attempting to end (%d) but current transaction is (%d)\n", txn_id, cur_txn->id);
 		return -1;
@@ -375,7 +347,7 @@ int end_txn(int txn_id)
 
 	if (!cur_txn) {
 		// commit everything and then delete log
-		sync();
+		sync(); // TODO: only sync touched files
 		if (!keep_log) {
 			glibc_remove(undo_log);
 			keep_log = 0;
@@ -405,7 +377,7 @@ int recover()
 	}
 
 	recover_log();
-	glibc_rename("logs/undo_log", "logs/recovered_undo_log"); // existence of undo log indicates crash
+	glibc_rename(undo_log, recovered_undo_log); // existence of undo log indicates crash
 
 	return 0;
 }
@@ -450,6 +422,7 @@ int open(const char *pathname, int flags, ...)
 
 	char entry[4096];
 	char *rp = realpath_missing(pathname);
+
 	// check if file already exists (don't infer from flags)
 	int creating = flags & O_CREAT;
 	int exists = (access(pathname, F_OK) == 0);
@@ -496,6 +469,7 @@ int mkdir(const char *pathname, mode_t mode)
 	recover();
 
 	if (cur_txn) {
+		// TODO: check if folder already exists
 		char entry[4096];
 		char *rp = realpath_missing(pathname);
 		sprintf(entry, "create %s\n", rp);
@@ -571,9 +545,10 @@ ssize_t write(int fd, const void *buf, size_t count)
 		char *bup = malloc(count);
 		int read_fd = glibc_open(path, O_RDWR);
 		lseek(read_fd, pos, SEEK_SET);
-		int bup_size = glibc_read(read_fd, bup, count);
+		int bup_size = read(read_fd, bup, count);
 		close(read_fd);
 
+		// save backup data to log directory
 		char backup_loc[4096];
 		sprintf(backup_loc, "%s/%d.data", log_dir, backup_id++);
 		int backup_data = glibc_open(backup_loc, O_CREAT | O_RDWR, 0644);
@@ -622,7 +597,7 @@ int ftruncate(int fd, off_t length)
 	} else {
 		char *trunk = malloc(length);
 		lseek(fd, 0, SEEK_SET);
-		glibc_read(fd, trunk, length);
+		read(fd, trunk, length);
 
 		remove(path);
 		int fd1 = open(path, O_CREAT | O_RDWR, st.st_mode);
