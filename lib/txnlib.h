@@ -20,8 +20,8 @@ int begin_txn(void);
 int end_txn(int txn_id);
 int recover();
 // int rollback();
-void save_log(int keep);
-int delete_log();
+void save_log(const char *dest);
+void delete_log();
 void set_bypass(int set);
 
 // for testing

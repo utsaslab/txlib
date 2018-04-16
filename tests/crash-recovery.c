@@ -390,7 +390,7 @@ void work()
 
         int id = begin_txn();
         perform_ops("out/txn");
-        save_log(1);
+        save_log(NULL);
         end_txn(id);
 
         if (diff("out/txn", "out/after") || diff("out/after", "out/txn")) {

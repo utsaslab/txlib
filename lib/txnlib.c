@@ -23,7 +23,6 @@ static ssize_t (*glibc_write)(int fd, const void *buf, size_t count);
 static int (*glibc_ftruncate)(int fd, off_t length);
 
 static int init = 0;
-static int keep_log = 0;
 static int next_id = 0; // TODO: prevent overflow
 static int backup_id = 0; // TODO: prevent overflow
 static const char *log_dir = "/var/tmp/txnlib-logs";
@@ -31,6 +30,7 @@ static const char *undo_log = "/var/tmp/txnlib-logs/undo_log";
 static const char *recovered_undo_log = "/var/tmp/txnlib-logs/recovered_undo_log";
 static const char *reversed_log = "/var/tmp/txnlib-logs/reversed_log";
 static const char *bypass = "/var/tmp/txnlib-logs/bypass"; // prevent issues when using system()
+static char *keep_log = NULL;
 static struct txn *cur_txn = NULL;
 
 // ========== helper methods ==========
@@ -348,9 +348,15 @@ int end_txn(int txn_id)
 	if (!cur_txn) {
 		// commit everything and then delete log
 		sync(); // TODO: only sync touched files
-		if (!keep_log) {
+		if (keep_log) {
+			printf("saving log to %s\n", keep_log);
+			int err = glibc_rename(undo_log, keep_log);
+			if (err)
+				printf("err: %d %s\n", err, strerror(errno));
+			free(keep_log);
+			keep_log = NULL;
+		} else {
 			glibc_remove(undo_log);
-			keep_log = 0;
 		}
 	}
 
@@ -382,9 +388,16 @@ int recover()
 	return 0;
 }
 
-void save_log(int keep) { keep_log = keep; }
+void save_log(const char *dest)
+{
+	keep_log = calloc(4096, 1);
+	if (dest)
+		sprintf(keep_log, "%s", dest);
+	else
+		sprintf(keep_log, "%s", undo_log);
+}
 
-int delete_log() { return glibc_remove(undo_log); }
+void delete_log() { glibc_remove(undo_log); }
 
 void set_bypass(int set)
 {
