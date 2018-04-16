@@ -58,6 +58,9 @@ unsigned long multiremove(int count, int txn, int file)
                 gettimeofday(&finish, NULL);
         }
 
+        for (int i = 0; i < count; i++)
+                free(paths[i]);
+
         return time_passed(start, finish) / count;
 }
 
@@ -78,7 +81,7 @@ void removebench()
 
         unsigned long none_file, none_dir;
         unsigned long txn_file, txn_dir;
-        int count = 1000;
+        int count = 10000;
 
         printf("- > txnless:\n");
         printf("- - > file: "); fflush(stdout);
@@ -351,12 +354,11 @@ void swapbench()
 int main()
 {
         /**
-         * 0 -> open
-         * 1 -> remove
-         * 2 -> write
-         * 3 -> swap
+         * 0 -> remove
+         * 1 -> write
+         * 2 -> swap
          */
-        int op = 2;
+        int op = 0;
 
         if (op == 0)
                 removebench();
