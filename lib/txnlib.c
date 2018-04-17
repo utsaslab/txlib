@@ -349,10 +349,9 @@ int end_txn(int txn_id)
 		// commit everything and then delete log
 		sync(); // TODO: only sync touched files
 		if (keep_log) {
-			printf("saving log to %s\n", keep_log);
 			int err = glibc_rename(undo_log, keep_log);
 			if (err)
-				printf("err: %d %s\n", err, strerror(errno));
+				printf("Error saving log to %s\n", strerror(errno));
 			free(keep_log);
 			keep_log = NULL;
 		} else {

@@ -406,7 +406,7 @@ void phoenix()
 
         // backup undo log for quick restore
         set_bypass(1);
-        system("cp logs/undo_log out/undo_log");
+        system("cp /var/tmp/txnlib-logs/undo_log out/undo_log");
         set_bypass(0);
 
         // try to base kill times on actual recovery
@@ -418,7 +418,7 @@ void phoenix()
         emp_recovery += 1000000000 * (finish.tv_sec - start.tv_sec);
         emp_recovery += 1000 * (finish.tv_usec - start.tv_usec);
         emp_recovery *= 1.25;
-        printf("empirical recovery time -> %lds %ldns, ", emp_recovery / 1000000000, emp_recovery % 1000000000);
+        printf("empirical recovery time -> %2lds %9ldns, ", emp_recovery / 1000000000, emp_recovery % 1000000000);
         fflush(stdout);
 
         int done = 0;
@@ -429,7 +429,7 @@ void phoenix()
                 // restore undo log if does not exist
                 if (access("logs/undo_log", F_OK) == -1) {
                         set_bypass(1);
-                        system("cp out/undo_log logs/undo_log");
+                        system("cp out/undo_log /var/tmp/txnlib-logs/undo_log");
                         set_bypass(0);
                 }
 
@@ -453,7 +453,7 @@ void phoenix()
                                 crashes++;
                         } else {
                                 done = 1;
-                                printf("crashes -> %d\n", crashes);
+                                printf("crashes -> %3d\n", crashes);
                         }
 
                         int status;
@@ -497,7 +497,7 @@ void test(int num_txns, int c)
                 make_noise();
 
                 int num_ops = between(MIN_OPS, MAX_OPS);
-                printf(" - txn #%d: num_ops -> %d, ", i, num_ops);
+                printf(" - txn #%2d: num_ops -> %4d, ", i, num_ops);
 		fflush(stdout);
                 generate_txn(num_ops, &dirs, &files, &next_id, pls);
 

@@ -23,12 +23,12 @@
 #include "txnlib.h"
 
 #define LAST_OP 5
-#define MIN_OPS 10
-#define MAX_OPS 100
+#define MIN_OPS 1
+#define MAX_OPS 99
 #define MIN_WRITE_SIZE 4096
 #define MAX_WRITE_SIZE 65536
 #define MIN_TXNS 10
-#define MAX_TXNS 100
+#define MAX_TXNS 99
 #define MAX_TRUNC 65536
 #define NOISE_SIZE 1000000
 
@@ -434,7 +434,7 @@ void phoenix()
                                 crashes++;
                         } else {
                                 done = 1;
-                                printf("crashes -> %d\n", crashes);
+                                printf("crashes -> %3d\n", crashes);
                         }
 
                         int status;
@@ -478,7 +478,7 @@ void test(int num_txns, int c)
                 make_noise();
 
                 int num_ops = between(MIN_OPS, MAX_OPS);
-                printf(" - txn #%d: num_ops -> %d, ", i, num_ops);
+                printf(" - txn #%2d: num_ops -> %2d, ", i, num_ops);
 		fflush(stdout);
                 generate_txn(num_ops, &dirs, &files, &next_id, pls);
 
