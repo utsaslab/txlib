@@ -72,32 +72,34 @@ void removebench()
          *  - within/without txn
          *  - file/directory
          */
+        int count = 10000;
+
         printf("  +++++++++++++++++++++++++++\n");
         printf("  +  BENCHMARKING remove()  +\n");
         printf("  +++++++++++++++++++++++++++\n");
+        printf(" - count: %d\n", count);
         printf(" - txn: within, without\n");
         printf(" - type: file, directory\n");
         printf("============================================\n");
 
         unsigned long none_file, none_dir;
         unsigned long txn_file, txn_dir;
-        int count = 10000;
 
         printf("- > txnless:\n");
         printf("- - > file: "); fflush(stdout);
         none_file = multiremove(count, 0, 1);
-        printf("%lds %ldns\n", none_file / NS, none_file % NS);
+        printf("%2lds %9ldns\n", none_file / NS, none_file % NS);
         printf("- - > dir:  "); fflush(stdout);
         none_dir = multiremove(count, 0, 0);
-        printf("%lds %ldns\n", none_dir / NS, none_dir % NS);
+        printf("%2lds %9ldns\n", none_dir / NS, none_dir % NS);
 
         printf("- > txnl:\n");
         printf("- - > file: "); fflush(stdout);
         txn_file = multiremove(count, 1, 1);
-        printf("%lds %ldns (overhead: %fx)\n", txn_file / NS, txn_file % NS, (double) txn_file / none_file);
+        printf("%2lds %9ldns (overhead: %7.2fx)\n", txn_file / NS, txn_file % NS, (double) txn_file / none_file);
         printf("- - > dir:  "); fflush(stdout);
         txn_dir = multiremove(count, 1, 0);
-        printf("%lds %ldns (overhead: %fx)\n", txn_dir / NS, txn_dir % NS, (double) txn_dir / none_dir);
+        printf("%2lds %9ldns (overhead: %7.2fx)\n", txn_dir / NS, txn_dir % NS, (double) txn_dir / none_dir);
 
         printf("============================================\n");
 }
