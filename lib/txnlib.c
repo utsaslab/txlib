@@ -170,6 +170,11 @@ int redo_write(const char *path, off_t pos, off_t length, const char *datapath)
 	return 0;
 }
 
+int redo_remove(const char *path)
+{
+	return glibc_remove(path);
+}
+
 // returns nonzero if failed
 int replay_log()
 {
@@ -191,6 +196,9 @@ int replay_log()
 			off_t length = atoi(nexttok(NULL));
 			char *datapath = strtok(nexttok(NULL), "\n");
 			redo_write(path, pos, length, datapath);
+		} else if (strcmp(op, "remove") == 0) {
+			char *path = strtok(nexttok(NULL), "\n");
+			redo_remove(path);
 		} else if (strcmp(op, "commit") == 0) {
 			break;
 		}
@@ -287,6 +295,12 @@ int redo()
 		glibc_rename(redo_log, "/var/tmp/txnlib/redo-log.save");
 	}
 	return ret;
+}
+
+void rollback()
+{
+	cur_txn = NULL;
+	glibc_remove(redo_log);
 }
 
 void save_log(const char *dest)
@@ -468,5 +482,24 @@ ssize_t write(int fd, const void *buf, size_t count)
 		return written;
 	} else {
 		return glibc_write(fd, buf, count);
+	}
+}
+
+int remove(const char *pathname)
+{
+	if (!init)
+		initialize();
+	redo();
+
+	if (cur_txn) {
+		char entry[5000];
+		memset(entry, '\0', sizeof(entry));
+		char *rp = realpath_missing(pathname);
+		snprintf(entry, sizeof(entry), "remove %s\n", rp);
+		write_to_log(entry);
+		free(rp);
+		return 0;
+	} else {
+		return glibc_remove(pathname);
 	}
 }

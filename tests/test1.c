@@ -6,17 +6,25 @@
 
 #include "txnlib.h"
 
-// test1: simple single-layered transaction
+// test1: deeply nested transaction
 
 int main(int argc, char **argv)
 {
-        int txn0 = begin_txn();
+	int depth = 1000;
+	int ids[depth];
 
-        int fd = open("out/test1.out", O_CREAT | O_RDWR, 0644);
-        write(fd, "hello transactional world\n", 26);
-        close(fd);
+	char id[64];
+	int fd = open("out/test1.out", O_CREAT | O_RDWR, 0644);
 
-        end_txn(txn0);
+	for (int i = 0; i < depth; i++)
+		ids[i] = begin_txn();
 
-        return 0;
+	write(fd, "hello nested transactional world\n", 33);
+	write(fd, "goodbye\n", 8);
+	close(fd);
+
+	for (int i = depth-1; i >= 0; i--)
+		end_txn(ids[i]);
+
+	return 0;
 }

@@ -27,7 +27,7 @@ struct vfile {
 int begin_txn(void);
 int end_txn(int txn_id);
 int redo(void);
-int rollback(void);
+void rollback(void);
 
 void save_log(const char *dest);
 void delete_log(void);
