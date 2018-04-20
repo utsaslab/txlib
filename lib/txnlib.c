@@ -15,7 +15,10 @@
 #include <unistd.h>
 #include <errno.h>
 
+#define FD_MAX 1024
+
 static int (*glibc_open)(const char *pathname, int flags, ...);
+static int (*glibc_close)(int fd);
 static int (*glibc_mkdir)(const char *pathname, mode_t mode);
 static int (*glibc_rename)(const char *oldpath, const char *newpath);
 static int (*glibc_remove)(const char *pathname);
@@ -26,14 +29,31 @@ static int (*glibc_ftruncate)(int fd, off_t length);
 static int init = 0;
 static int next_txn_id = 0; // TODO: prevent overflow
 static int redirect_id = 0; // TODO: prevent overflow
+static int log_fd = -1;
 static const char *log_dir = "/var/tmp/txnlib";
 static const char *redo_log = "/var/tmp/txnlib/redo-log";
 static const char *bypass = "/var/tmp/txnlib/bypass"; // prevent issues when using system()
 static struct txn *cur_txn = NULL;
-static int log_fd = -1;
 static char *keep_log = NULL;
 
+static struct file_desc *fd_map[FD_MAX];
+static struct vfile *vfiles = NULL;
+
 // ========== helper methods ==========
+
+void initialize()
+{
+	glibc_open = dlsym(RTLD_NEXT, "open");
+	glibc_close = dlsym(RTLD_NEXT, "close");
+	glibc_mkdir = dlsym(RTLD_NEXT, "mkdir");
+	glibc_rename = dlsym(RTLD_NEXT, "rename");
+	glibc_remove = dlsym(RTLD_NEXT, "remove");
+	glibc_read = dlsym(RTLD_NEXT, "read");
+	glibc_write = dlsym(RTLD_NEXT, "write");
+	glibc_ftruncate = dlsym(RTLD_NEXT, "ftruncate");
+
+	init = 1;
+}
 
 int committed()
 {
@@ -47,19 +67,6 @@ int committed()
 	last[7] = '\0';
 
 	return strcmp(last, "commit\n") == 0;
-}
-
-void initialize()
-{
-	glibc_open = dlsym(RTLD_NEXT, "open");
-	glibc_mkdir = dlsym(RTLD_NEXT, "mkdir");
-	glibc_rename = dlsym(RTLD_NEXT, "rename");
-	glibc_remove = dlsym(RTLD_NEXT, "remove");
-	glibc_read = dlsym(RTLD_NEXT, "read");
-	glibc_write = dlsym(RTLD_NEXT, "write");
-	glibc_ftruncate = dlsym(RTLD_NEXT, "ftruncate");
-
-	init = 1;
 }
 
 // returns absolute path even if file doesn't exist (need to free returned pointer)
@@ -99,6 +106,38 @@ off_t filesize(const char *path)
 	return (stat(path, &metadata) == 0) ? metadata.st_size : -1;
 }
 
+// ========== fd_map + vfiles ==========
+
+int next_fd()
+{
+	for (int i = 0; i < FD_MAX; i++)
+		if (!fd_map[i] && !fcntl(i, F_GETFD)) // also check it is not a valid open fd
+			return i;
+	return -1;
+}
+
+struct vfile *find_by_path(const char *path)
+{
+	struct vfile *vf = vfiles;
+	while (vf) {
+		if (strcmp(path, vf->path) == 0)
+			return vf;
+		vf = vf->next;
+	}
+	return NULL;
+}
+
+struct vfile *find_by_src(const char *src)
+{
+	struct vfile *vf = vfiles;
+	while (vf) {
+		if (strcmp(src, vf->src) == 0)
+			return vf;
+		vf = vf->next;
+	}
+	return NULL;
+}
+
 // ========== testing ==========
 
 void crash() { cur_txn = NULL; }
@@ -110,6 +149,27 @@ int redo_mkdir(const char *path, mode_t mode)
 	return glibc_mkdir(path, mode);
 }
 
+int redo_create(const char *path)
+{
+	return glibc_close(glibc_open(path, O_CREAT, 0644));
+}
+
+int redo_write(const char *path, off_t pos, off_t length, const char *datapath)
+{
+	char buf[length];
+	int rd = glibc_open(datapath, O_RDWR);
+	lseek(rd, pos, SEEK_SET);
+	glibc_read(rd, buf, length);
+	glibc_close(rd);
+
+	int fd = glibc_open(path, O_RDWR);
+	lseek(fd, pos, SEEK_SET);
+	glibc_write(fd, buf, length);
+	glibc_close(fd);
+
+	return 0;
+}
+
 // returns nonzero if failed
 int replay_log()
 {
@@ -118,11 +178,21 @@ int replay_log()
 	memset(entry, '\0', sizeof(entry));
 	while(fgets(entry, sizeof(entry), fp)) {
 		char *op = nexttok(entry);
-
 		if (strcmp(op, "mkdir") == 0) {
 			char *path = nexttok(NULL);
-			mode_t mode = atoi(strtok(nexttok(NULL), "\n"));
+			mode_t mode = atoi(nexttok(NULL));
 			redo_mkdir(path, mode);
+		} else if (strcmp(op, "create") == 0) {
+			char *path = strtok(nexttok(NULL), "\n");
+			redo_create(path);
+		} else if (strcmp(op, "write") == 0) {
+			char *path = nexttok(NULL);
+			off_t pos = atoi(nexttok(NULL));
+			off_t length = atoi(nexttok(NULL));
+			char *datapath = strtok(nexttok(NULL), "\n");
+			redo_write(path, pos, length, datapath);
+		} else if (strcmp(op, "commit") == 0) {
+			break;
 		}
 	}
 	fclose(fp);
@@ -193,6 +263,7 @@ int end_txn(int txn_id)
 	if (!cur_txn) {
 		write_to_log("commit\n");
 		fsync(log_fd);
+		glibc_close(log_fd);
 		redo();
 	}
 
@@ -212,7 +283,8 @@ int redo()
 		free(keep_log);
 		keep_log = NULL;
 	} else {
-		glibc_remove(redo_log);
+		// glibc_remove(redo_log);
+		glibc_rename(redo_log, "/var/tmp/txnlib/redo-log.save");
 	}
 	return ret;
 }
@@ -243,6 +315,82 @@ void set_bypass(int set)
 
 // ========== glibc wrappers ==========
 
+int open(const char *pathname, int flags, ...)
+{
+	if (!init)
+		initialize();
+	redo();
+
+	// just get mode so don't need to muddy up method
+	int mode = -1;
+	if (flags & (O_CREAT | O_TMPFILE)) {
+		va_list args;
+		va_start(args, flags);
+		mode = va_arg(args, int);
+	}
+
+	if (cur_txn) {
+		char *rp = realpath_missing(pathname);
+
+		// quickly log entry if needed (creating or truncating)
+		char entry[5000];
+		memset(entry, '\0', sizeof(entry));
+		if (flags & O_CREAT) {
+			snprintf(entry, sizeof(entry), "create %s\n", rp);
+			write_to_log(entry);
+		}
+		if (flags & O_TRUNC) {
+			memset(entry, '\0', sizeof(entry));
+			snprintf(entry, sizeof(entry), "truncate %s 0\n", rp);
+			write_to_log(entry);
+		}
+
+		struct vfile *vf = find_by_path(rp);
+		if (!vf) {
+			vf = malloc(sizeof(struct vfile));
+			snprintf(vf->path, sizeof(vf->path), "%s", rp);
+			snprintf(vf->src, sizeof(vf->src), "%s", rp);
+			snprintf(vf->redirect, sizeof(vf->redirect), "%s/%d.rd", log_dir, redirect_id++);
+			vf->size = filesize(rp);
+			vf->next = vfiles;
+			vfiles = vf;
+		}
+		free(rp);
+
+		struct file_desc *vfd = malloc(sizeof(struct file_desc));
+		if (flags & O_TRUNC) {
+			vfd->pos = 0;
+			vf->size = 0;
+		} else if (flags & O_APPEND) {
+			vfd->pos = vf->size;
+		} else {
+			vfd->pos = 0;
+		}
+		vfd->file = vf;
+
+		int ret = next_fd();
+		fd_map[ret] = vfd;
+		return ret;
+	} else {
+		return glibc_open(pathname, flags, mode);
+	}
+}
+
+int close(int fd)
+{
+	if (!init)
+		initialize();
+	redo();
+
+	if (cur_txn) {
+		free(fd_map[fd]);
+		fd_map[fd] = NULL;
+		return 0;
+	} else {
+		return glibc_close(fd);
+	}
+}
+
 int mkdir(const char *pathname, mode_t mode)
 {
 	if (!init)
@@ -261,5 +409,64 @@ int mkdir(const char *pathname, mode_t mode)
 		return 0;
 	} else {
 		return glibc_mkdir(pathname, mode);
+	}
+}
+
+ssize_t write(int fd, const void *buf, size_t count)
+{
+	if (!init)
+		initialize();
+	redo();
+
+	if (cur_txn) {
+		// first check fd_map for fd, otherwise, get map fd to new file_desc
+		struct file_desc *vfd = fd_map[fd];
+
+		if (!vfd) {
+			char *path = get_path_from_fd(fd);
+
+			// could already be in vfiles or not
+			struct vfile *vf = find_by_src(path);
+			if (!vf) {
+				// if not in vfiles, then it hasn't been touched within the txn
+				vf = malloc(sizeof(struct vfile));
+				snprintf(vf->path, sizeof(vf->path), "%s", path);
+				snprintf(vf->src, sizeof(vf->src), "%s", path);
+				snprintf(vf->redirect, sizeof(vf->redirect), "%s/%d.rd", log_dir, redirect_id++);
+				vf->size = filesize(path);
+				vf->next = vfiles;
+				vfiles = vf;
+			}
+
+			// create a new file_desc and map it
+			vfd = malloc(sizeof(struct file_desc));
+			vfd->pos = lseek(fd, 0, SEEK_CUR);
+			vfd->file = vf;
+			fd_map[fd] = vfd;
+
+			free(path);
+		}
+
+		// prepare log entry
+		char entry[10000];
+		memset(entry, '\0', sizeof(entry));
+
+		// write data to redirect at offset
+		int rd = glibc_open(vfd->file->redirect, O_CREAT | O_RDWR, 0644);
+		lseek(rd, vfd->pos, SEEK_SET);
+		ssize_t written = glibc_write(rd, buf, count);
+		glibc_close(rd);
+
+		snprintf(entry, sizeof(entry), "write %s %ld %ld %s\n", vfd->file->path, vfd->pos, written, vfd->file->redirect);
+		write_to_log(entry);
+
+		vfd->pos += written;
+
+		if (vfd->pos > vfd->file->size)
+			vfd->file->size = vfd->pos;
+
+		return written;
+	} else {
+		return glibc_write(fd, buf, count);
 	}
 }

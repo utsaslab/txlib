@@ -9,6 +9,20 @@ struct txn {
 	struct txn *next;
 };
 
+struct file_desc {
+	off_t pos;
+	struct vfile *file;
+};
+
+struct vfile {
+	char path[4096+1];
+	char src[4096+1]; // for reading
+	char redirect[4096+1];
+	off_t size;
+
+	struct vfile *next;
+};
+
 // txnlib API
 int begin_txn(void);
 int end_txn(int txn_id);
@@ -28,6 +42,7 @@ void crash(void);
 
 // around file
 int open(const char *pathname, int flags, ... /* mode_t mode */);
+int close(int fd);
 int mkdir(const char *pathname, mode_t mode);
 int rename(const char *oldpath, const char *newpath);
 int remove(const char *pathname);
