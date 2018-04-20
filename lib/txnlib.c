@@ -77,10 +77,15 @@ int committed()
 // returns absolute path even if file doesn't exist (need to free returned pointer)
 char *realpath_missing(const char *path)
 {
+	char *rp = realpath(path, NULL);
+	if (rp)
+		return rp;
+
+	// if the path is missing, then run process (realpath() cannot resolve missing paths)
 	int size = 4096;
-	char *rp = calloc(size, 1);
+	rp = calloc(size, 1);
 	char command[4096];
-	sprintf(command, "realpath -m %s", path);
+	snprintf(command, sizeof(command), "realpath -m %s", path);
 
 	set_bypass(1);
 	FILE *out = popen(command, "r");
@@ -328,7 +333,7 @@ void set_bypass(int set)
 
 	if (set) {
 		glibc_mkdir(log_dir, 0777);
-		close(glibc_open(bypass, O_CREAT, 0644));
+		glibc_close(glibc_open(bypass, O_CREAT, 0644));
 	} else {
 		glibc_remove(bypass);
 	}
@@ -440,11 +445,18 @@ int remove(const char *pathname)
 	redo();
 
 	if (cur_txn) {
+		char *rp = realpath_missing(pathname);
+		struct vfile *vf = find_by_path(rp);
+		if (vf) {
+			vf->path[0] = '\0';
+			vf->size = 0;
+		}
+
 		char entry[5000];
 		memset(entry, '\0', sizeof(entry));
-		char *rp = realpath_missing(pathname);
 		snprintf(entry, sizeof(entry), "remove %s\n", rp);
 		write_to_log(entry);
+
 		free(rp);
 		return 0;
 	} else {
@@ -491,10 +503,12 @@ ssize_t write(int fd, const void *buf, size_t count)
 		char entry[10000];
 		memset(entry, '\0', sizeof(entry));
 
+		// if file has been removed, don't write
+		if (strlen(vfd->file->path) == 0)
+			return 0;
+
 		// write data to redirect at offset
 		int rd = glibc_open(vfd->file->redirect, O_CREAT | O_RDWR, 0644);
-		if (rd == -1)
-			printf("rd is -1: %s\n", strerror(errno));
 		glibc_lseek(rd, vfd->pos, SEEK_SET);
 		ssize_t written = glibc_write(rd, buf, count);
 		glibc_close(rd);

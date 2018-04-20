@@ -50,8 +50,10 @@ unsigned long multiremove(int count, int txn, int file)
                 if (txn)
                         txn_id = begin_txn();
 
-                for (int i = 0; i < count; i++)
+                for (int i = 0; i < count; i++) {
+                        // printf("i: %d\n", i);
                         remove(paths[i]);
+                }
 
                 if (txn)
                         end_txn(txn_id);
@@ -114,7 +116,6 @@ unsigned long multiwrite(int buf_size, int count, int durability, int overwrite,
                 system(cmd);
                 set_bypass(0);
         }
-
 
         unsigned long runtime = 0;
         for (int i = 0; i < count; i++) {
