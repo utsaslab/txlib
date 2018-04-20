@@ -1066,6 +1066,7 @@ main(int argc, char **argv)
 
 	struct timeval start, finish;
 	quiet = 1;
+
 	// WRITE
 	op = 1;
 
@@ -1080,28 +1081,6 @@ main(int argc, char **argv)
 
 	gettimeofday(&finish, NULL);
 	printf("%ld\n", time_passed(start, finish));
-
-	// printf("++++++++++++++++++++\n");
-	// printf("running write (op = 1) tests...\n");
-	// op = 1;
-	// int count = numops;
-	// int id = begin_txn();
-	// while (count == -1 || count--) {
-	// 	test();
-	// 	if (count % 1000 == 0)
-	// 		printf("%d\n", count);
-	// }
-	// crash();
-	// recover();
-	//
-	// int check = open(fname, O_RDWR);
-	// struct stat st;
-	// fstat(check, &st);
-	// if (st.st_size == 0)
-	// 	prt("File successfully restored after write stress test!\n");
-	// else
-	// 	prt("Failed to restore file. Size is %d. (should be 0)\n", st.st_size);
-	// close(check);
 
 	// FTRUNCATE
 	op = 3;
@@ -1118,45 +1097,7 @@ main(int argc, char **argv)
 	gettimeofday(&finish, NULL);
 	printf("%ld\n", time_passed(start, finish));
 
-	// FTRUNCATE
-	// op = 3;
-	// unsigned long mem_truncs = 0, txn_truncs = 0;
-	//
-	// gettimeofday(&start, NULL);
-	// for (int i = 0; i < numops; i++)
-	// 	test();
-	// gettimeofday(&finish, NULL);
-	// mem_writes = time_passed(start, finish);
-	//
-	// truncate(fname, 0);
-	// gettimeofday(&start, NULL);
-	// txn_id = begin_txn();
-	// for (int i = 0; i < numops; i++)
-	// 	test();
-	// end_txn(txn_id);
-	// gettimeofday(&finish, NULL);
-	// txn_writes = time_passed(start, finish);
-
-	// printf("++++++++++++++++++++\n");
-	// printf("running ftruncate (op = 3) tests...\n");
-	// op = 3;
-	// count = numops;
-	// id = begin_txn();
-	// while (count == -1 || count--) {
-	// 	test();
-	// 	if (count % 1000 == 0)
-	// 		printf("%d\n", count);
-	// }
-	// crash();
-	// recover();
-	//
-	// check = open(fname, O_RDWR);
-	// fstat(check, &st);
-	// if (st.st_size == 0)
-	// 	prt("File successfully restored after ftruncate stress test!\n");
-	// else
-	// 	prt("Failed to restore file. Size is %d. (should be 0)\n", st.st_size);
-	// close(check);
+	// ========== DONE ==========
 
 	if (close(fd)) {
 		prterr("close");

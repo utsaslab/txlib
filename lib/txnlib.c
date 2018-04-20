@@ -9,10 +9,10 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <unistd.h>
 #include <utime.h>
 #include "txnlib.h"
 
-#include <unistd.h>
 #include <errno.h>
 
 #define FD_MAX 1024
@@ -25,6 +25,8 @@ static int (*glibc_remove)(const char *pathname);
 static ssize_t (*glibc_read)(int fd, void *buf, size_t count);
 static ssize_t (*glibc_write)(int fd, const void *buf, size_t count);
 static int (*glibc_ftruncate)(int fd, off_t length);
+static int (*glibc_fxstat)(int vers, int fd, struct stat *statbuf);
+static int (*glibc_lseek)(int fd, off_t offset, int whence);
 
 static int init = 0;
 static int next_txn_id = 0; // TODO: prevent overflow
@@ -34,10 +36,9 @@ static const char *log_dir = "/var/tmp/txnlib";
 static const char *redo_log = "/var/tmp/txnlib/redo-log";
 static const char *bypass = "/var/tmp/txnlib/bypass"; // prevent issues when using system()
 static struct txn *cur_txn = NULL;
-static char *keep_log = NULL;
-
 static struct file_desc *fd_map[FD_MAX];
 static struct vfile *vfiles = NULL;
+static char *keep_log = NULL;
 
 // ========== helper methods ==========
 
@@ -51,6 +52,8 @@ void initialize()
 	glibc_read = dlsym(RTLD_NEXT, "read");
 	glibc_write = dlsym(RTLD_NEXT, "write");
 	glibc_ftruncate = dlsym(RTLD_NEXT, "ftruncate");
+	glibc_fxstat = dlsym(RTLD_NEXT, "__fxstat"); // glibc fstat is weird
+	glibc_lseek = dlsym(RTLD_NEXT, "lseek");
 
 	init = 1;
 }
@@ -62,9 +65,11 @@ int committed()
 		return 0;
 
 	char last[8];
-	lseek(log_fd, -7, SEEK_END);
+	glibc_lseek(log_fd, -7, SEEK_END);
 	glibc_read(log_fd, last, 7);
 	last[7] = '\0';
+
+	glibc_close(log_fd);
 
 	return strcmp(last, "commit\n") == 0;
 }
@@ -105,6 +110,8 @@ off_t filesize(const char *path)
 	struct stat metadata;
 	return (stat(path, &metadata) == 0) ? metadata.st_size : -1;
 }
+
+int glibc_fstat(int fd, struct stat *statbuf) { return glibc_fxstat(_STAT_VER, fd, statbuf); }
 
 // ========== fd_map + vfiles ==========
 
@@ -158,12 +165,12 @@ int redo_write(const char *path, off_t pos, off_t length, const char *datapath)
 {
 	char buf[length];
 	int rd = glibc_open(datapath, O_RDWR);
-	lseek(rd, pos, SEEK_SET);
+	glibc_lseek(rd, pos, SEEK_SET);
 	glibc_read(rd, buf, length);
 	glibc_close(rd);
 
 	int fd = glibc_open(path, O_RDWR);
-	lseek(fd, pos, SEEK_SET);
+	glibc_lseek(fd, pos, SEEK_SET);
 	glibc_write(fd, buf, length);
 	glibc_close(fd);
 
@@ -426,6 +433,25 @@ int mkdir(const char *pathname, mode_t mode)
 	}
 }
 
+int remove(const char *pathname)
+{
+	if (!init)
+		initialize();
+	redo();
+
+	if (cur_txn) {
+		char entry[5000];
+		memset(entry, '\0', sizeof(entry));
+		char *rp = realpath_missing(pathname);
+		snprintf(entry, sizeof(entry), "remove %s\n", rp);
+		write_to_log(entry);
+		free(rp);
+		return 0;
+	} else {
+		return glibc_remove(pathname);
+	}
+}
+
 ssize_t write(int fd, const void *buf, size_t count)
 {
 	if (!init)
@@ -454,7 +480,7 @@ ssize_t write(int fd, const void *buf, size_t count)
 
 			// create a new file_desc and map it
 			vfd = malloc(sizeof(struct file_desc));
-			vfd->pos = lseek(fd, 0, SEEK_CUR);
+			vfd->pos = glibc_lseek(fd, 0, SEEK_CUR);
 			vfd->file = vf;
 			fd_map[fd] = vfd;
 
@@ -467,7 +493,9 @@ ssize_t write(int fd, const void *buf, size_t count)
 
 		// write data to redirect at offset
 		int rd = glibc_open(vfd->file->redirect, O_CREAT | O_RDWR, 0644);
-		lseek(rd, vfd->pos, SEEK_SET);
+		if (rd == -1)
+			printf("rd is -1: %s\n", strerror(errno));
+		glibc_lseek(rd, vfd->pos, SEEK_SET);
 		ssize_t written = glibc_write(rd, buf, count);
 		glibc_close(rd);
 
@@ -485,21 +513,86 @@ ssize_t write(int fd, const void *buf, size_t count)
 	}
 }
 
-int remove(const char *pathname)
+int ftruncate(int fd, off_t length)
 {
 	if (!init)
 		initialize();
 	redo();
 
 	if (cur_txn) {
-		char entry[5000];
-		memset(entry, '\0', sizeof(entry));
-		char *rp = realpath_missing(pathname);
-		snprintf(entry, sizeof(entry), "remove %s\n", rp);
-		write_to_log(entry);
-		free(rp);
+		struct file_desc *vfd = fd_map[fd];
+
+		if (!vfd) {
+			char *path = get_path_from_fd(fd);
+
+			struct vfile *vf = find_by_src(path);
+			if (!vf) {
+				vf = malloc(sizeof(struct vfile));
+				snprintf(vf->path, sizeof(vf->path), "%s", path);
+				snprintf(vf->src, sizeof(vf->src), "%s", path);
+				snprintf(vf->redirect, sizeof(vf->redirect), "%s/%d.rd", log_dir, redirect_id++);
+				vf->size = filesize(path);
+				vf->next = vfiles;
+				vfiles = vf;
+			}
+
+			vfd = malloc(sizeof(struct file_desc));
+			vfd->pos = glibc_lseek(fd, 0, SEEK_CUR);
+			vfd->file = vf;
+			fd_map[fd] = vfd;
+
+			free(path);
+		}
+
+		vfd->file->size = length;
+
 		return 0;
 	} else {
-		return glibc_remove(pathname);
+		return glibc_ftruncate(fd, length);
+	}
+}
+
+int fstat(int fd, struct stat *statbuf)
+{
+	if (!init)
+		initialize();
+	redo();
+
+	if (cur_txn) {
+		struct file_desc *vfd = fd_map[fd];
+		if (vfd) {
+			int ret = stat(vfd->file->src, statbuf);
+			statbuf->st_size = vfd->file->size;
+			return ret;
+		} else {
+			return glibc_fstat(fd, statbuf);
+		}
+	} else {
+		return glibc_fstat(fd, statbuf);
+	}
+}
+
+off_t lseek(int fd, off_t offset, int whence)
+{
+	if (!init)
+		initialize();
+	redo();
+
+	if (cur_txn) {
+		struct file_desc *vfd = fd_map[fd];
+
+		if (!vfd)
+			return glibc_lseek(fd, offset, whence);
+
+		if (whence == SEEK_SET)
+			vfd->pos = offset;
+		else if (whence == SEEK_CUR)
+			vfd->pos += offset;
+		else if (whence == SEEK_END)
+			vfd->pos = vfd->file->size + offset;
+
+		return vfd->pos;
+	} else {
+		return glibc_lseek(fd, offset, whence);
 	}
 }

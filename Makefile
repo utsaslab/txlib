@@ -58,7 +58,7 @@ fsx-txn:
 
 fsx-bench:
 	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
-	gcc $(BENCHDIRs)/fsx-bench.c -o $(OUTDIR)/fsxb && \
+	gcc $(BENCHDIR)/fsx-bench.c -o $(OUTDIR)/fsxb && \
 	./$(OUTDIR)/fsxb \
 
 clean:
