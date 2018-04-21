@@ -74,7 +74,7 @@ void removebench()
          *  - within/without txn
          *  - file/directory
          */
-        int count = 10000;
+        int count = 100000;
 
         printf("  +++++++++++++++++++++++++++\n");
         printf("  +  BENCHMARKING remove()  +\n");
@@ -284,8 +284,8 @@ unsigned long multiswap(int buf_size, int count, int txn, unsigned long filesize
                 gettimeofday(&start, NULL);
                 int fd = -1, txn_id = -1;
                 if (txn) {
+                        fd = open(working_file, O_RDWR); // TODO: issue with close(fd) after end_txn()
                         txn_id = begin_txn();
-                        fd = open(working_file, O_RDWR);
                 } else {
                         copy(working_backup, working_file);
                         fd = open(working_backup, O_RDWR);
@@ -330,7 +330,6 @@ void swapbench()
         unsigned long swap_times[range];
         unsigned long txn_times[range];
 
-
         printf("> swap...\n");
 
         for (int i = 0; i < range; i++) {
@@ -361,7 +360,7 @@ int main()
          * 1 -> write
          * 2 -> swap
          */
-        int op = 0;
+        int op = 2;
 
         if (op == 0)
                 removebench();

@@ -2,48 +2,35 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 #include <unistd.h>
 
 #include "txnlib.h"
 
-// test5: simple metadata test
+// test5: read() after write() within txn
 
 int main(int argc, char **argv)
 {
-        /**
-         * Relevant metadata includes:
-         *   mode
-         *   user + group
-         *   access/modify/change time
-         */
-        int fd = open("out/test5.out", O_CREAT | O_RDWR, 0777);
-        struct stat old;
-        fstat(fd, &old);
-        time_t before = old.st_mtim.tv_sec;
+        int fd = open("out/test5.out", O_CREAT | O_TRUNC | O_RDWR, 0644);
+        write(fd, "1234567890", 10);
+
+        int txn0 = begin_txn();
+
+        lseek(fd, 2, SEEK_SET);
+        write(fd, "cdefg", 5);
+        lseek(fd, 0, SEEK_SET);
+        char buf[11];
+        read(fd, buf, 10);
+        buf[10] = '\0';
+
+        end_txn(txn0);
+
+        ftruncate(fd, 0);
+        lseek(fd, 0, SEEK_SET);
+        if (strcmp(buf, "12cdefg890") == 0)
+                write(fd, "read-your-writes\n", 17);
+        else
+                write(fd, "no read-your-writes\n", 20);
         close(fd);
 
-        sleep(1); // ensure that times are different enough
-
-	int txn0 = begin_txn();
-
-        int fd1 = open("out/test5.out", O_RDWR);
-        write(fd1, ".", 1);
-        close(fd1);
-        
-        rollback();
-
-        struct stat new;
-        int fd2 = open("out/test5.out", O_RDWR);
-        fstat(fd2, &new);
-        time_t after = new.st_mtim.tv_sec;
-
-        if (before == after)
-                write(fd2, "metadata restored\n", 18);
-        else
-                write(fd2, "metadata failure\n", 17);
-        close(fd2);
-
-	return 0;
+        return 0;
 }

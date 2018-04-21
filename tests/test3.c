@@ -2,30 +2,45 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "txnlib.h"
 
-// test3: simple create then crash
+// test0: simple mkdir test
+
+int is_real_dir(const char *path)
+{
+        struct stat st;
+        stat(path, &st);
+        return S_ISDIR(st.st_mode) && access(path, F_OK) == 0;
+}
 
 int main(int argc, char **argv)
 {
-	int txn0 = begin_txn();
+        mkdir("out/test3-dir", 0755);
 
-	int fd = open("out/test3.out", O_CREAT | O_RDWR, 0644);
-	close(fd);
+        int txn0 = begin_txn();
 
-	crash();
+        mkdir("out/test3-dir/a", 0755);
+        mkdir("out/test3-dir/a/b/c", 0755);
+        mkdir("out/test3-dir/a/b", 0755);
+        mkdir("out/test3-dir/a/d", 0755);
+        mkdir("out/test3-dir/a/b/e", 0755);
 
-	int fd1 = open("out/test3.out", O_RDWR);
-	if (fd1 == -1) {
-		int fd2 = open("out/test3.out", O_CREAT | O_RDWR, 0644);
-		write(fd2, "this did not exist\n", 19);
-		close(fd2);
-	} else {
-		write(fd1, "this file should not exist\n", 27);
-		close(fd1);
-	}
+        end_txn(txn0);
 
-	return 0;
+        int fd = open("out/test3.out", O_CREAT | O_TRUNC | O_RDWR, 0644);
+        if (is_real_dir("out/test3-dir/a") &&
+            is_real_dir("out/test3-dir/a/b") &&
+            !is_real_dir("out/test3-dir/a/b/c") &&
+            is_real_dir("out/test3-dir/a/d") &&
+            is_real_dir("out/test3-dir/a/b/e"))
+                write(fd, "mkdirs successful :)\n", 21);
+        else
+                write(fd, "mkdirs failed\n", 14);
+        close(fd);
+
+        return 0;
 }

@@ -16,12 +16,20 @@ struct file_desc {
 };
 
 struct vfile {
-	char path[4096+1];
+	char path[4096+1]; // NULL string if removed
 	char src[4096+1]; // for reading
 	char redirect[4096+1];
-	off_t size;
+	struct range *writes;
 
 	struct vfile *next;
+};
+
+struct range {
+	off_t begin;
+	off_t end;
+
+	struct range *prev;
+	struct range *next;
 };
 
 // txnlib API
