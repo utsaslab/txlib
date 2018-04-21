@@ -58,6 +58,27 @@ void initialize()
 	init = 1;
 }
 
+void reset()
+{
+	log_fd = -1;
+	cur_txn = NULL;
+
+	for (int i = 0; i < FD_MAX; i++) {
+		if (fd_map[i]) {
+			free(fd_map[i]);
+			fd_map[i] = NULL;
+		}
+	}
+
+	struct vfile *vf = vfiles;
+	while (vf) {
+		struct vfile *free_me = vf;
+		vf = vf->next;
+		free(free_me);
+	}
+	vfiles = NULL;
+}
+
 int committed()
 {
 	int log_fd = glibc_open(redo_log, O_RDONLY);
@@ -120,7 +141,8 @@ int glibc_fstat(int fd, struct stat *statbuf) { return glibc_fxstat(_STAT_VER, f
 
 // ========== fd_map + vfiles ==========
 
-struct vfile *find_by_path(const char *path)
+// will create node if not yet existing
+struct vfile *find_by_path(const char *path, int create)
 {
 	struct vfile *vf = vfiles;
 	while (vf) {
@@ -128,7 +150,21 @@ struct vfile *find_by_path(const char *path)
 			return vf;
 		vf = vf->next;
 	}
-	return NULL;
+
+	if (!create && access(path, F_OK))
+		return NULL;
+
+	// need to create node
+	vf = malloc(sizeof(struct vfile));
+	snprintf(vf->path, sizeof(vf->path), "%s", path);
+	snprintf(vf->src, sizeof(vf->src), "%s", path);
+	snprintf(vf->redirect, sizeof(vf->redirect), "%s/%d.rd", log_dir, redirect_id++);
+	glibc_close(glibc_open(vf->redirect, O_CREAT, 0644));
+	vf->writes = NULL;
+	vf->next = vfiles;
+	vfiles = vf;
+
+	return vf;
 }
 
 struct vfile *find_by_src(const char *src)
@@ -202,6 +238,7 @@ struct file_desc *get_fd(int fd)
 	if (!vfd) {
 		// if the fd hasn't been seen in the txn, then it must be real
 		char *path = get_path_from_fd(fd); // TODO: what if invalid fd?
+		printf("fd path: %s\n", path);
 		struct vfile *vf = find_by_src(path);
 		if (!vf) {
 			// if not in vfiles, then it hasn't been touched within the txn
@@ -209,6 +246,7 @@ struct file_desc *get_fd(int fd)
 			snprintf(vf->path, sizeof(vf->path), "%s", path);
 			snprintf(vf->src, sizeof(vf->src), "%s", path);
 			snprintf(vf->redirect, sizeof(vf->redirect), "%s/%d.rd", log_dir, redirect_id++);
+			glibc_close(glibc_open(vf->redirect, O_CREAT, 0644));
 			vf->writes = NULL;
 
 			// add to vfiles
@@ -252,10 +290,10 @@ int redo_write(const char *path, off_t pos, off_t length, const char *datapath)
 
 	int fd = glibc_open(path, O_RDWR);
 	glibc_lseek(fd, pos, SEEK_SET);
-	glibc_write(fd, buf, length);
+	ssize_t written = glibc_write(fd, buf, length);
 	glibc_close(fd);
 
-	return 0;
+	return !(written == length);
 }
 
 int redo_remove(const char *path)
@@ -263,12 +301,21 @@ int redo_remove(const char *path)
 	return glibc_remove(path);
 }
 
+int redo_rename(const char *src, const char *dest)
+{
+	return glibc_rename(src, dest);
+}
+
+int redo_truncate(const char *path, off_t length)
+{
+	return truncate(path, length);
+}
+
 // returns nonzero if failed
 int replay_log()
 {
 	FILE *fp = fopen(redo_log, "r");
 	char entry[8500]; // two ext4 max paths + a lil more
-	memset(entry, '\0', sizeof(entry));
 	while(fgets(entry, sizeof(entry), fp)) {
 		char *op = nexttok(entry);
 		if (strcmp(op, "mkdir") == 0) {
@@ -287,6 +334,14 @@ int replay_log()
 		} else if (strcmp(op, "remove") == 0) {
 			char *path = strtok(nexttok(NULL), "\n");
 			redo_remove(path);
+		} else if (strcmp(op, "rename") == 0) {
+			char *src = nexttok(NULL);
+			char *dest = strtok(nexttok(NULL), "\n");
+			redo_rename(src, dest);
+		} else if (strcmp(op, "truncate") == 0) {
+			char *path = nexttok(NULL);
+			off_t length = atoi(nexttok(NULL));
+			redo_truncate(path, length);
 		} else if (strcmp(op, "commit") == 0) {
 			break;
 		}
@@ -383,6 +438,8 @@ int end_txn(int txn_id)
 		glibc_close(log_fd);
 
 		redo();
+
+		reset();
 	}
 
 	return 0;
@@ -461,28 +518,20 @@ int open(const char *pathname, int flags, ...)
 
 		// log entry if needed (creating or truncating)
 		char entry[5000];
-		memset(entry, '\0', sizeof(entry));
+		struct vfile *vf = find_by_path(rp, 0);
 		if (flags & O_CREAT) {
+			vf = find_by_path(rp, 1);
 			snprintf(entry, sizeof(entry), "create %s\n", rp);
 			write_to_log(entry);
 		}
 		if (flags & O_TRUNC) {
-			memset(entry, '\0', sizeof(entry));
 			snprintf(entry, sizeof(entry), "truncate %s 0\n", rp);
 			write_to_log(entry);
 		}
-
-		struct vfile *vf = find_by_path(rp);
-		if (!vf) {
-			vf = malloc(sizeof(struct vfile));
-			snprintf(vf->path, sizeof(vf->path), "%s", rp);
-			snprintf(vf->src, sizeof(vf->src), "%s", rp);
-			snprintf(vf->redirect, sizeof(vf->redirect), "%s/%d.rd", log_dir, redirect_id++);
-			vf->writes = NULL;
-			vf->next = vfiles;
-			vfiles = vf;
-		}
 		free(rp);
+
+		if (!vf)
+			return -1;
 
 		struct file_desc *vfd = malloc(sizeof(struct file_desc));
 		if (flags & O_TRUNC) {
@@ -526,7 +575,6 @@ int mkdir(const char *pathname, mode_t mode)
 
 	if (cur_txn) {
 		char entry[5000];
-		memset(entry, '\0', sizeof(entry));
 		char *rp = realpath_missing(pathname);
 		snprintf(entry, sizeof(entry), "mkdir %s %d\n", rp, mode);
 		free(rp);
@@ -539,6 +587,40 @@ int mkdir(const char *pathname, mode_t mode)
 	}
 }
 
+int rename(const char *oldpath, const char *newpath)
+{
+	if (!init)
+		initialize();
+	redo();
+
+	if (cur_txn) {
+		char *old_rp = realpath_missing(oldpath);
+		char *new_rp = realpath_missing(newpath);
+		struct vfile *old = find_by_path(old_rp, 0);
+		struct vfile *new = find_by_path(new_rp, 0);
+
+		if (new) {
+			free(old_rp);
+			free(new_rp);
+			return -1;
+		}
+
+		snprintf(old->path, sizeof(old->path), "%s", new_rp);
+
+		// log operation
+		char entry[10000];
+		snprintf(entry, sizeof(entry), "rename %s %s\n", old_rp, new_rp);
+		write_to_log(entry);
+
+		free(old_rp);
+		free(new_rp);
+
+		return 0;
+	} else {
+		return glibc_rename(oldpath, newpath);
+	}
+}
+
 int remove(const char *pathname)
 {
 	if (!init)
@@ -547,12 +629,14 @@ int remove(const char *pathname)
 
 	if (cur_txn) {
 		char *rp = realpath_missing(pathname);
-		struct vfile *vf = find_by_path(rp);
-		if (vf)
-			vf->path[0] = '\0';
+		struct vfile *vf = find_by_path(rp, 0);
+
+		if (!vf)
+			return -1;
+
+		vf->path[0] = '\0';
 
 		char entry[5000];
-		memset(entry, '\0', sizeof(entry));
 		snprintf(entry, sizeof(entry), "remove %s\n", rp);
 		write_to_log(entry);
 
@@ -611,8 +695,10 @@ ssize_t write(int fd, const void *buf, size_t count)
 		struct file_desc *vfd = get_fd(fd);
 
 		// if file has been removed, don't write
-		if (strlen(vfd->file->path) == 0)
+		if (strlen(vfd->file->path) == 0) {
+			printf("shouldn't see this: %s\n", vfd->file->redirect	);
 			return 0;
+		}
 
 		// write data to redirect at offset
 		int rd = glibc_open(vfd->file->redirect, O_CREAT | O_RDWR, 0644);
@@ -626,7 +712,6 @@ ssize_t write(int fd, const void *buf, size_t count)
 
 		// record entry in log
 		char entry[10000];
-		memset(entry, '\0', sizeof(entry));
 		snprintf(entry, sizeof(entry), "write %s %ld %ld %s\n", vfd->file->path, vfd->pos - written, written, vfd->file->redirect);
 		write_to_log(entry);
 
@@ -644,6 +729,12 @@ int ftruncate(int fd, off_t length)
 
 	if (cur_txn) {
 		struct file_desc *vfd = get_fd(fd);
+
+		// log entry
+		char entry[5000];
+		snprintf(entry, sizeof(entry), "truncate %s %ld\n", vfd->file->path, length);
+		write_to_log(entry);
+
 		return truncate(vfd->file->redirect, length);
 	} else {
 		return glibc_ftruncate(fd, length);

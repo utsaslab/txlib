@@ -22,9 +22,11 @@
 
 #include "txnlib.h"
 
+#define NS 1000000000
+
 #define LAST_OP 5
-#define MIN_OPS 1
-#define MAX_OPS 99
+#define MIN_OPS 1000
+#define MAX_OPS 5000
 #define MIN_WRITE_SIZE 4096
 #define MAX_WRITE_SIZE 65536
 #define MIN_TXNS 10
@@ -36,7 +38,7 @@ struct operation {
         /**
          * -1 -> END
          * 0 -> create
-         * 1 -> mkdir
+         * 1 -> mkdirs
          * 2 -> remove
          * 3 -> write
          * 4 -> ftruncate
@@ -376,61 +378,63 @@ void perform_ops(const char *folder)
 
 // ========== processes ==========
 
-void work()
-{
-        // recover, then compare before/ and txn/
-        set_bypass(0);
-        recover();
-
-        // compare txn and before
-        if (diff("out/txn", "out/before") || diff("out/before", "out/txn")) {
-                printf("RECOVERY FAILED!!!\n");
-                exit(66);
-        }
-
-        int id = begin_txn();
-        perform_ops("out/txn");
-        save_log(NULL);
-        end_txn(id);
-
-        if (diff("out/txn", "out/after") || diff("out/after", "out/txn")) {
-                printf("TRANSACTION FAILED\n");
-                exit(77);
-        }
-}
-
-// repeatedly kill and revive work()
 void phoenix()
 {
+        // obtain the redo log
+        int id = begin_txn();
+        perform_ops("out/txn");
+        save_log("out/redo-log.save");
+        end_txn(id);
+
+        // set things up to redo
+        set_bypass(1);
+        system("rm -rf out/txn");
+        system("cp -r out/before out/txn");
+        system("cp out/redo-log.save /var/tmp/txnlib/redo-log");
+        set_bypass(0);
+
         // try to base kill times on actual runtime
-        struct timeval start;
-        struct timeval finish;
+        struct timeval start, finish;
         gettimeofday(&start, NULL);
-        work();
+        redo();
         gettimeofday(&finish, NULL);
-        unsigned long emp_wait_nsec = 0;
-        emp_wait_nsec += 1000000000 * (finish.tv_sec - start.tv_sec);
-        emp_wait_nsec += 1000 * (finish.tv_usec - start.tv_usec);
+        uint64_t runtime = 0;
+        runtime += 1000000000 * (finish.tv_sec - start.tv_sec);
+        runtime += 1000 * (finish.tv_usec - start.tv_usec);
 
         int done = 0;
         double kill_prob = 100;
         int crashes = 0;
         while (!done) {
+                // recover from whatever fs state after kill
+                // check match
+                // reset folders
+                // call redo() and kill in the middle
+                redo();
+                if (diff("out/txn", "out/after") || diff("out/after", "out/txn")) {
+                        printf("REDO() FAILED!!!\n");
+                        exit(88);
+                }
+
+                // reset out/txn
+                set_bypass(1);
+                system("rm -rf out/txn");
+                system("cp -r out/before out/txn");
+                system("cp out/redo-log.save /var/tmp/txnlib/redo-log");
+                set_bypass(0);
+
                 int worker = fork();
                 if (worker == 0) {
-                        work();
+                        redo();
                         _exit(0);
                 } else {
-                        int roll = between(0, 100);
-                        if (roll < kill_prob) {
-                                int sec = between(0, emp_wait_nsec / 1000000000);
-                                int nsec = between(0, emp_wait_nsec % 1000000000);
+                        if (between(0, 100) < kill_prob) {
                                 struct timespec ts;
-                                ts.tv_sec = sec;
-                                ts.tv_nsec = nsec;
+                                ts.tv_sec = between(0, runtime / NS);
+                                ts.tv_nsec = between(0, runtime % NS);
                                 nanosleep(&ts, NULL);
                                 kill(worker, SIGKILL);
-                                kill_prob -= 0.05;
+                                kill_prob -= 0.01;
                                 crashes++;
                         } else {
                                 done = 1;
@@ -442,7 +446,7 @@ void phoenix()
                         int result = WEXITSTATUS(status);
                         if (result) {
                                 printf("worker() error: %d\n", result);
-                                exit(62);
+                                exit(111);
                         }
                 }
         }
@@ -478,8 +482,7 @@ void test(int num_txns, int c)
                 make_noise();
 
                 int num_ops = between(MIN_OPS, MAX_OPS);
-                printf(" - txn #%2d: num_ops -> %2d, ", i, num_ops);
-		fflush(stdout);
+                printf(" - txn #%2d: num_ops -> %2d, ", i, num_ops); fflush(stdout);
                 generate_txn(num_ops, &dirs, &files, &next_id, pls);
 
                 // initialize after/ and txn/
