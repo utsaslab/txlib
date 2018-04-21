@@ -26,7 +26,7 @@
 
 #define LAST_OP 5
 #define MIN_OPS 1000
-#define MAX_OPS 5000
+#define MAX_OPS 10000
 #define MIN_WRITE_SIZE 4096
 #define MAX_WRITE_SIZE 65536
 #define MIN_TXNS 10
@@ -402,8 +402,10 @@ void phoenix()
         runtime += 1000000000 * (finish.tv_sec - start.tv_sec);
         runtime += 1000 * (finish.tv_usec - start.tv_usec);
 
+        printf("crashes -> "); fflush(stdout);
+
         int done = 0;
-        double kill_prob = 100;
+        double kill_prob = 1000;
         int crashes = 0;
         while (!done) {
                 // recover from whatever fs state after kill
@@ -428,17 +430,18 @@ void phoenix()
                         redo();
                         _exit(0);
                 } else {
-                        if (between(0, 100) < kill_prob) {
+			int roll = between(0, 1000);
+                        if (roll < kill_prob) {
                                 struct timespec ts;
                                 ts.tv_sec = between(0, runtime / NS);
                                 ts.tv_nsec = between(0, runtime % NS);
                                 nanosleep(&ts, NULL);
                                 kill(worker, SIGKILL);
-                                kill_prob -= 0.01;
+                                kill_prob -= 0.05;
                                 crashes++;
                         } else {
                                 done = 1;
-                                printf("crashes -> %3d\n", crashes);
+                                printf("%3d\n", crashes);
                         }
 
                         int status;

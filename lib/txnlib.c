@@ -159,6 +159,7 @@ struct vfile *find_by_path(const char *path, int create)
 	snprintf(vf->path, sizeof(vf->path), "%s", path);
 	snprintf(vf->src, sizeof(vf->src), "%s", path);
 	snprintf(vf->redirect, sizeof(vf->redirect), "%s/%d.rd", log_dir, redirect_id++);
+	truncate(vf->redirect, filesize(vf->src));
 	glibc_close(glibc_open(vf->redirect, O_CREAT, 0644));
 	vf->writes = NULL;
 	vf->next = vfiles;
@@ -238,7 +239,6 @@ struct file_desc *get_fd(int fd)
 	if (!vfd) {
 		// if the fd hasn't been seen in the txn, then it must be real
 		char *path = get_path_from_fd(fd); // TODO: what if invalid fd?
-		printf("fd path: %s\n", path);
 		struct vfile *vf = find_by_src(path);
 		if (!vf) {
 			// if not in vfiles, then it hasn't been touched within the txn
@@ -247,6 +247,7 @@ struct file_desc *get_fd(int fd)
 			snprintf(vf->src, sizeof(vf->src), "%s", path);
 			snprintf(vf->redirect, sizeof(vf->redirect), "%s/%d.rd", log_dir, redirect_id++);
 			glibc_close(glibc_open(vf->redirect, O_CREAT, 0644));
+			truncate(vf->redirect, filesize(vf->src));
 			vf->writes = NULL;
 
 			// add to vfiles
@@ -671,14 +672,14 @@ ssize_t read(int fd, void *buf, size_t count)
 		while (writes) {
 			if (end >= writes->begin && begin <= writes->end) {
 				off_t overlap_begin = (begin > writes->begin) ? begin : writes->begin;
-				off_t overlap_end = (end < writes->end) ? end : writes->end;
+				off_t overlap_end = (end < writes->end && end != overlap_begin) ? end : writes->end;
 				glibc_lseek(rd, overlap_begin, SEEK_SET);
 				glibc_read(rd, buf + (overlap_begin - begin), overlap_end - overlap_begin);
 			}
 			writes = writes->next;
 		}
 
-		return count;
+		return red;
 	} else {
 		return glibc_read(fd, buf, count);
 	}
@@ -729,6 +730,10 @@ int ftruncate(int fd, off_t length)
 
 	if (cur_txn) {
 		struct file_desc *vfd = get_fd(fd);
+
+		// if extends past file, include write range
+		if (length > filesize(vfd->file->redirect))
+			merge_range(vfd->file, filesize(vfd->file->redirect), length);
 
 		// log entry
 		char entry[5000];
