@@ -36,15 +36,15 @@ crash:
 	gcc $(TESTDIR)/crash.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/crash -ldl && \
 	LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./$(OUTDIR)/crash $(CRASHFLAGS) \
 
-crash-recovery:
-	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
-	gcc $(TESTDIR)/crash-recovery.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/crash-recovery -ldl && \
-	LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./$(OUTDIR)/crash-recovery $(CRASHFLAGS) \
-
 benchmark:
 	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
 	gcc $(BENCHDIR)/benchmark.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/benchmark -ldl -lm && \
 	LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./$(OUTDIR)/benchmark $(BENCHMARKFLAGS) \
+
+big-writes:
+	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
+	gcc $(BENCHDIR)/big-writes.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/big-writes -ldl && \
+	LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./$(OUTDIR)/big-writes \
 
 fsx:
 	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
