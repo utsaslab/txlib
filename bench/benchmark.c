@@ -50,10 +50,8 @@ unsigned long multiremove(int count, int txn, int file)
                 if (txn)
                         txn_id = begin_txn();
 
-                for (int i = 0; i < count; i++) {
-                        // printf("i: %d\n", i);
+                for (int i = 0; i < count; i++)
                         remove(paths[i]);
-                }
 
                 if (txn)
                         end_txn(txn_id);
@@ -74,7 +72,7 @@ void removebench()
          *  - within/without txn
          *  - file/directory
          */
-        int count = 100000;
+        int count = 10000;
 
         printf("  +++++++++++++++++++++++++++\n");
         printf("  +  BENCHMARKING remove()  +\n");

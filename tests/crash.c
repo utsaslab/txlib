@@ -25,12 +25,12 @@
 #define NS 1000000000
 
 #define LAST_OP 5
-#define MIN_OPS 1000
-#define MAX_OPS 10000
+#define MIN_OPS 100
+#define MAX_OPS 999
 #define MIN_WRITE_SIZE 4096
 #define MAX_WRITE_SIZE 65536
 #define MIN_TXNS 10
-#define MAX_TXNS 99
+#define MAX_TXNS 50
 #define MAX_TRUNC 65536
 #define NOISE_SIZE 1000000
 
