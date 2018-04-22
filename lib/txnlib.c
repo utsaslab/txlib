@@ -141,6 +141,17 @@ int glibc_fstat(int fd, struct stat *statbuf) { return glibc_fxstat(_STAT_VER, f
 
 // ========== fd_map + vfiles ==========
 
+struct vfile *find_by_src(const char *src)
+{
+	struct vfile *vf = vfiles;
+	while (vf) {
+		if (strcmp(src, vf->src) == 0)
+			return vf;
+		vf = vf->next;
+	}
+	return NULL;
+}
+
 // will create node if not yet existing
 struct vfile *find_by_path(const char *path, int create)
 {
@@ -151,7 +162,8 @@ struct vfile *find_by_path(const char *path, int create)
 		vf = vf->next;
 	}
 
-	if (!create && access(path, F_OK))
+	// if not creating, then return NULL if deleted or doesn't really exist
+	if (!create && (find_by_src(path) || access(path, F_OK)))
 		return NULL;
 
 	// need to create node
@@ -159,24 +171,13 @@ struct vfile *find_by_path(const char *path, int create)
 	snprintf(vf->path, sizeof(vf->path), "%s", path);
 	snprintf(vf->src, sizeof(vf->src), "%s", path);
 	snprintf(vf->redirect, sizeof(vf->redirect), "%s/%d.rd", log_dir, redirect_id++);
-	truncate(vf->redirect, filesize(vf->src));
 	glibc_close(glibc_open(vf->redirect, O_CREAT, 0644));
+	truncate(vf->redirect, filesize(vf->src));
 	vf->writes = NULL;
 	vf->next = vfiles;
 	vfiles = vf;
 
 	return vf;
-}
-
-struct vfile *find_by_src(const char *src)
-{
-	struct vfile *vf = vfiles;
-	while (vf) {
-		if (strcmp(src, vf->src) == 0)
-			return vf;
-		vf = vf->next;
-	}
-	return NULL;
 }
 
 void merge_range(struct vfile *vf, off_t begin, off_t end)
@@ -696,10 +697,8 @@ ssize_t write(int fd, const void *buf, size_t count)
 		struct file_desc *vfd = get_fd(fd);
 
 		// if file has been removed, don't write
-		if (strlen(vfd->file->path) == 0) {
-			printf("shouldn't see this: %s\n", vfd->file->redirect	);
+		if (strlen(vfd->file->path) == 0)
 			return 0;
-		}
 
 		// write data to redirect at offset
 		int rd = glibc_open(vfd->file->redirect, O_CREAT | O_RDWR, 0644);
