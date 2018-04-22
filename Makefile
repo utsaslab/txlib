@@ -61,5 +61,10 @@ fsx-bench:
 	gcc $(BENCHDIR)/fsx-bench.c -o $(OUTDIR)/fsxb && \
 	./$(OUTDIR)/fsxb \
 
+sqlite-bench:
+	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
+	gcc $(BENCHDIR)/write-8mb.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/write-8mb -ldl && \
+	LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./$(OUTDIR)/write-8mb \
+
 clean:
 	rm -rf libtxn.so $(LOGDIR)/ $(OUTDIR)/
