@@ -1073,6 +1073,7 @@ main(int argc, char **argv)
 
 	for (int i = 0; i < numops; i++)
 		test();
+	fsync(fd);
 
 	gettimeofday(&finish, NULL);
 	printf("%ld\n", time_passed(start, finish));
@@ -1106,6 +1107,7 @@ main(int argc, char **argv)
 
 	for (int i = 0; i < numops; i++)
 		test();
+	fsync(fd);
 
 	gettimeofday(&finish, NULL);
 	printf("%ld\n", time_passed(start, finish));

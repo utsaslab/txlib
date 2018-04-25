@@ -2,6 +2,7 @@
 
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <libgen.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -272,17 +273,30 @@ void crash() { cur_txn = NULL; }
 
 // ========== redo log methods ==========
 
-int redo_mkdir(const char *path, mode_t mode)
+int fsync_dir(char *path)
 {
-	return glibc_mkdir(path, mode);
+	char *dir = dirname(path);
+	int fd = glibc_open(dir, O_RDWR);
+	int ret = fsync(fd);
+	glibc_close(fd);
+	return ret;
 }
 
-int redo_create(const char *path)
+int redo_mkdir(char *path, mode_t mode)
 {
-	return glibc_close(glibc_open(path, O_CREAT, 0644));
+	int ret = glibc_mkdir(path, mode);
+	fsync_dir(path);
+	return ret;
 }
 
-int redo_write(const char *path, off_t pos, off_t length, const char *datapath)
+int redo_create(char *path)
+{
+	int ret = glibc_close(glibc_open(path, O_CREAT, 0644));
+	fsync_dir(path);
+	return ret;
+}
+
+int redo_write(char *path, off_t pos, off_t length, const char *datapath)
 {
 	char buf[length];
 	int rd = glibc_open(datapath, O_RDWR);
@@ -298,22 +312,27 @@ int redo_write(const char *path, off_t pos, off_t length, const char *datapath)
 	return !(written == length);
 }
 
-int redo_remove(const char *path)
+int redo_remove(char *path)
 {
-	return glibc_remove(path);
+	int ret = glibc_remove(path);
+	fsync_dir(path);
+	return ret;
 }
 
-int redo_rename(const char *src, const char *dest)
+int redo_rename(char *src, char *dest)
 {
-	return glibc_rename(src, dest);
+	int ret = glibc_rename(src, dest);
+	fsync_dir(src);
+	fsync_dir(dest);
+	return ret;
 }
 
-int redo_truncate(const char *path, off_t length)
+int redo_truncate(char *path, off_t length)
 {
 	return truncate(path, length);
 }
 
-// returns nonzero if failed
+// returns nonzero if failed (TODO: persist all directories too)
 int replay_log()
 {
 	FILE *fp = fopen(redo_log, "r");
@@ -374,9 +393,14 @@ int persist_all_data()
 	}
 
 	// also need to sync directory
-	int dir = glibc_open(log_dir, O_DIRECTORY);
-	fsync(dir);
-	glibc_close(dir);
+	int ld = glibc_open(log_dir, O_DIRECTORY);
+	fsync(ld);
+	glibc_close(ld);
+
+	// commit entry indicates log is complete
+	write_to_log("commit\n");
+	fsync(log_fd);
+	glibc_close(log_fd);
 
 	return 0;
 }
@@ -434,13 +458,7 @@ int end_txn(int txn_id)
 	// last transaction
 	if (!cur_txn) {
 		persist_all_data();
-
-		write_to_log("commit\n");
-		fsync(log_fd);
-		glibc_close(log_fd);
-
 		redo();
-
 		reset();
 	}
 

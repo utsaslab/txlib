@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <fcntl.h>
+#include <libgen.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,7 +34,7 @@ unsigned long multiremove(int count, int txn, int file)
         mkdir("out/remove", 0755);
         char *paths[count];
         for (int i = 0; i < count; i++) {
-                char *path = malloc(1024); // TODO: free later
+                char *path = malloc(1024);
                 sprintf(path, "out/remove/%d", i);
                 paths[i] = path;
 
@@ -53,8 +54,14 @@ unsigned long multiremove(int count, int txn, int file)
                 for (int i = 0; i < count; i++)
                         remove(paths[i]);
 
-                if (txn)
+                if (txn) {
                         end_txn(txn_id);
+                } else {
+                        int dir = open("out/remove", O_RDWR);
+                        fsync(dir);
+                        close(dir);
+                }
+
                 gettimeofday(&finish, NULL);
         }
 
@@ -135,8 +142,12 @@ unsigned long multiwrite(int buf_size, int count, int durability, int overwrite,
                         for (int j = 0; j < length; j++)
                                 write(fd, buf, buf_size);
 
-                        if (durability == 1)
+                        if (durability == 1) {
                                 fsync(fd);
+                                int dir = open("out", O_RDWR);
+                                fsync(dir);
+                                close(dir);
+                        }
 
                         if (durability == 2)
                                 end_txn(txn_id);
@@ -297,8 +308,11 @@ unsigned long multiswap(int buf_size, int count, int txn, unsigned long filesize
                 if (txn) {
                         end_txn(txn_id);
                 } else {
-                        fsync(fd);
                         rename(working_backup, working_file);
+                        fsync(fd);
+                        int dir = open("out", O_RDWR);
+                        fsync(dir);
+                        close(dir);
                 }
                 close(fd);
                 gettimeofday(&finish, NULL);
