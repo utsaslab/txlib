@@ -216,7 +216,7 @@ struct vfile *find_by_path(const char *path, int create)
 	if (!create) {
 		int err = truncate(vf->redirect, filesize(vf->src));
 		if (err)
-			printf("Failed to truncate redirect file for (%s): %s\n", path, strerror(errno));
+			printf("Failed to truncate redirect file in find_by_path() for (%s): %s\n", path, strerror(errno));
 	}
 
 	vf->writes = NULL;
@@ -288,10 +288,16 @@ int next_fd()
 // retrieves entry from fd_map, creates one if doesn't already exist
 struct file_desc *get_vfd(int fd)
 {
+	if (fd < 0)
+		return NULL;
+
 	struct file_desc *vfd = fd_map[fd];
 	if (!vfd) {
-		// if the fd hasn't been seen in the txn, then it must be real
-		char *path = get_path_from_fd(fd); // TODO: what if invalid fd?
+		// if the fd hasn't been seen in the txn, then it must be real (TODO: what about invalid fd?)
+		char *path = get_path_from_fd(fd);
+		if (strlen(path) == 0)
+			return NULL;
+
 		struct vfile *vf = find_by_src(path);
 		if (!vf) {
 			// if not in vfiles, then it hasn't been touched within the txn
@@ -299,8 +305,16 @@ struct file_desc *get_vfd(int fd)
 			snprintf(vf->path, sizeof(vf->path), "%s", path);
 			snprintf(vf->src, sizeof(vf->src), "%s", path);
 			snprintf(vf->redirect, sizeof(vf->redirect), "%s/%d.rd", log_dir, redirect_id++);
-			glibc_close(glibc_open(vf->redirect, O_CREAT, 0644));
-			truncate(vf->redirect, filesize(vf->src));
+
+			int rd = glibc_open(vf->redirect, O_CREAT, 0644);
+			if (rd == -1)
+				printf("Failed to create redirect file for (%s): %s\n", path, strerror(errno));
+			glibc_close(rd);
+
+			int err = truncate(vf->redirect, filesize(vf->src));
+			if (err)
+				printf("Failed to truncate redirect file in get_vfd() for (%s): %s\n", path, strerror(errno));
+
 			vf->writes = NULL;
 
 			// add to vfiles
@@ -317,10 +331,6 @@ struct file_desc *get_vfd(int fd)
 	}
 	return vfd;
 }
-
-// ========== testing ==========
-
-void crash() { cur_txn = NULL; }
 
 // ========== redo log methods ==========
 
@@ -342,22 +352,30 @@ int redo_mkdir(char *path, mode_t mode)
 
 int redo_create(char *path)
 {
-	int ret = glibc_close(glibc_open(path, O_CREAT, 0644));
+	glibc_close(glibc_open(path, O_CREAT, 0644));
 	fsync_dir(path);
-	return ret;
+	return 0;
 }
 
 int redo_write(char *path, off_t pos, off_t length, const char *datapath)
 {
 	char buf[length];
 	int rd = glibc_open(datapath, O_RDWR);
+	if (rd == -1) {
+		printf("Failed to open redirect file in redo_write() for (%s): %s\n", path, strerror(errno));
+		return -1;
+	}
 	glibc_lseek(rd, pos, SEEK_SET);
 	glibc_read(rd, buf, length);
 	glibc_close(rd);
 
 	int fd = glibc_open(path, O_RDWR);
+	if (fd == -1) {
+		printf("Attempting to write to nonexistent file (%s) in redo_write(): %s\n", path, strerror(errno));
+	}
 	glibc_lseek(fd, pos, SEEK_SET);
 	ssize_t written = glibc_write(fd, buf, length);
+	fsync(fd);
 	glibc_close(fd);
 
 	return !(written == length);
@@ -426,20 +444,20 @@ int replay_log()
 
 void write_to_log(const char *entry)
 {
-	int log_fd = glibc_open(redo_log, O_APPEND | O_RDWR);
-	if (log_fd == -1) {
+	int log = glibc_open(redo_log, O_APPEND | O_RDWR);
+	if (log == -1) {
 		printf("Error opening log: %s\n", strerror(errno));
 		return;
 	}
 
-	int written = glibc_write(log_fd, entry, strlen(entry));
+	int written = glibc_write(log, entry, strlen(entry));
 	if (written != strlen(entry)) {
 		printf("Error writing to log: (actual -> %d) vs (expected -> %zd) %s\n",
 			written, strlen(entry), strerror(errno));
 		return;
 	}
 
-	glibc_close(log_fd);
+	glibc_close(log);
 }
 
 int persist_all_data()
@@ -453,16 +471,16 @@ int persist_all_data()
 		vf = vf->next;
 	}
 
-	// also need to sync directory
+	// also need to persist log directory
 	int ld = glibc_open(log_dir, O_DIRECTORY);
 	fsync(ld);
 	glibc_close(ld);
 
 	// commit entry indicates log is complete
-	int log_fd = glibc_open(redo_log, O_RDWR);
-	fsync(log_fd);
-	glibc_close(log_fd);
-	write_to_log("commit\n");
+	int log = glibc_open(redo_log, O_RDWR);
+	fsync(log);
+	glibc_close(log);
+	write_to_log("commit\n"); // do not need to call fsync() after, it's there or it isn't
 
 	return 0;
 }
@@ -642,7 +660,11 @@ int close(int fd)
 	redo();
 
 	if (cur_txn) {
-		free(fd_map[fd]);
+		struct file_desc* vfd = get_vfd(fd);
+		if (!vfd)
+			return -1;
+
+		free(vfd);
 		fd_map[fd] = NULL;
 		return 0;
 	} else {
@@ -738,6 +760,8 @@ ssize_t read(int fd, void *buf, size_t count)
 
 	if (cur_txn) {
 		struct file_desc *vfd = get_vfd(fd);
+		if (!vfd)
+			return 0;
 
 		// read src data
 		int src = glibc_open(vfd->file->src, O_RDONLY);
@@ -776,6 +800,8 @@ ssize_t write(int fd, const void *buf, size_t count)
 	if (cur_txn) {
 		// first check fd_map for fd, otherwise, map fd to new file_desc
 		struct file_desc *vfd = get_vfd(fd);
+		if (!vfd)
+			return 0;
 
 		// if file has been removed, don't write
 		if (strlen(vfd->file->path) == 0)

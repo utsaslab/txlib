@@ -42,9 +42,6 @@ void save_log(const char *dest);
 void delete_log(void);
 void set_bypass(int set);
 
-// testing
-void crash(void);
-
 /**
  * glibc filesystem calls (keep same method signature)
  */
