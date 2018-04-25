@@ -332,7 +332,7 @@ int redo_truncate(char *path, off_t length)
 	return truncate(path, length);
 }
 
-// returns nonzero if failed (TODO: persist all directories too)
+// returns nonzero if failed
 int replay_log()
 {
 	FILE *fp = fopen(redo_log, "r");

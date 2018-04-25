@@ -47,5 +47,5 @@ int main()
         gettimeofday(&finish, NULL);
 
 	unsigned long runtime = time_passed(start, finish);
-        printf("rewriting 1 GB: %lds %ldns\n", runtime / 1000000000, runtime % 1000000000);
+        printf("redo() after writing 1 GB: %lds %ldns\n", runtime / 1000000000, runtime % 1000000000);
 }
