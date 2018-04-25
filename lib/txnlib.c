@@ -30,9 +30,8 @@ static int (*glibc_fxstat)(int vers, int fd, struct stat *statbuf);
 static int (*glibc_lseek)(int fd, off_t offset, int whence);
 
 static int init = 0;
-static int next_txn_id = 0; // TODO: prevent overflow
-static int redirect_id = 0; // TODO: prevent overflow
-static int log_fd = -1;
+static int next_txn_id = 0;
+static int redirect_id = 0;
 static const char *log_dir = "/var/tmp/txnlib";
 static const char *redo_log = "/var/tmp/txnlib/redo-log";
 static const char *bypass = "/var/tmp/txnlib/bypass"; // prevent issues when using system()
@@ -46,22 +45,50 @@ static char *keep_log = NULL;
 void initialize()
 {
 	glibc_open = dlsym(RTLD_NEXT, "open");
+	if (glibc_open == NULL)
+		printf("Error wrapping open(): %s\n", dlerror());
+
 	glibc_close = dlsym(RTLD_NEXT, "close");
+	if (glibc_close == NULL)
+		printf("Error wrapping close(): %s\n", dlerror());
+
 	glibc_mkdir = dlsym(RTLD_NEXT, "mkdir");
+	if (glibc_mkdir == NULL)
+		printf("Error wrapping mkdir(): %s\n", dlerror());
+
 	glibc_rename = dlsym(RTLD_NEXT, "rename");
+	if (glibc_rename == NULL)
+		printf("Error wrapping rename(): %s\n", dlerror());
+
 	glibc_remove = dlsym(RTLD_NEXT, "remove");
+	if (glibc_remove == NULL)
+		printf("Error wrapping remove(): %s\n", dlerror());
+
 	glibc_read = dlsym(RTLD_NEXT, "read");
+	if (glibc_read == NULL)
+		printf("Error wrapping read(): %s\n", dlerror());
+
 	glibc_write = dlsym(RTLD_NEXT, "write");
+	if (glibc_write == NULL)
+		printf("Error wrapping write(): %s\n", dlerror());
+
 	glibc_ftruncate = dlsym(RTLD_NEXT, "ftruncate");
+	if (glibc_ftruncate == NULL)
+		printf("Error wrapping ftruncate(): %s\n", dlerror());
+
 	glibc_fxstat = dlsym(RTLD_NEXT, "__fxstat"); // glibc fstat is weird
+	if (glibc_fxstat == NULL)
+		printf("Error wrapping fstat(): %s\n", dlerror());
+
 	glibc_lseek = dlsym(RTLD_NEXT, "lseek");
+	if (glibc_lseek == NULL)
+		printf("Error wrapping lseek(): %s\n", dlerror());
 
 	init = 1;
 }
 
 void reset()
 {
-	log_fd = -1;
 	cur_txn = NULL;
 
 	for (int i = 0; i < FD_MAX; i++) {
@@ -78,20 +105,26 @@ void reset()
 		free(free_me);
 	}
 	vfiles = NULL;
+
+	if (keep_log) {
+		free(keep_log);
+		keep_log = NULL;
+	}
 }
 
+// transaction is committed if log exists and last line is "commit"
 int committed()
 {
-	int log_fd = glibc_open(redo_log, O_RDONLY);
-	if (log_fd == -1)
+	int log = glibc_open(redo_log, O_RDONLY);
+	if (log == -1)
 		return 0;
 
 	char last[8];
-	glibc_lseek(log_fd, -7, SEEK_END);
-	glibc_read(log_fd, last, 7);
+	glibc_lseek(log, -7, SEEK_END);
+	glibc_read(log, last, 7);
 	last[7] = '\0';
 
-	glibc_close(log_fd);
+	glibc_close(log);
 
 	return strcmp(last, "commit\n") == 0;
 }
@@ -103,17 +136,18 @@ char *realpath_missing(const char *path)
 	if (rp)
 		return rp;
 
-	// if the path is missing, then run process (realpath() cannot resolve missing paths)
-	int size = 4096;
+	// if the path is missing, then run process bc realpath() cannot resolve missing paths
+	char command[4200]; // ext4 max path length + some more
+	snprintf(command, sizeof(command), "realpath -m %s", path); // -m for missing paths
+
+	int size = 4096+2; // 2: 1 for newline + 1 for null term
 	rp = calloc(size, 1);
-	char command[4096];
-	snprintf(command, sizeof(command), "realpath -m %s", path);
 
 	set_bypass(1);
 	FILE *out = popen(command, "r");
 	fgets(rp, size, out);
 	pclose(out);
-	rp[strlen(rp)-1] = 0; // trim the newline off
+	rp[strlen(rp)-1] = '\0'; // trim the newline off
 	set_bypass(0);
 
 	return rp;
@@ -122,9 +156,9 @@ char *realpath_missing(const char *path)
 // (need to free returned pointer)
 char *get_path_from_fd(int fd)
 {
-	char *path = calloc(4096, 1);
+	char *path = calloc(4096+1, 1);
 	char link[128];
-	sprintf(link, "/proc/self/fd/%d", fd);
+	snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
 	readlink(link, path, 4096);
 	return path;
 }
@@ -138,6 +172,7 @@ off_t filesize(const char *path)
 	return (stat(path, &metadata) == 0) ? metadata.st_size : -1;
 }
 
+// fstat is weird, so we have to be weird too
 int glibc_fstat(int fd, struct stat *statbuf) { return glibc_fxstat(_STAT_VER, fd, statbuf); }
 
 // ========== fd_map + vfiles ==========
@@ -167,13 +202,23 @@ struct vfile *find_by_path(const char *path, int create)
 	if (!create && (find_by_src(path) || access(path, F_OK)))
 		return NULL;
 
-	// need to create node
+	// create and initialize, then add to vfiles
 	vf = malloc(sizeof(struct vfile));
 	snprintf(vf->path, sizeof(vf->path), "%s", path);
 	snprintf(vf->src, sizeof(vf->src), "%s", path);
 	snprintf(vf->redirect, sizeof(vf->redirect), "%s/%d.rd", log_dir, redirect_id++);
-	glibc_close(glibc_open(vf->redirect, O_CREAT, 0644));
-	truncate(vf->redirect, filesize(vf->src));
+
+	int rd = glibc_open(vf->redirect, O_CREAT, 0644);
+	if (rd == -1)
+		printf("Failed to create redirect file for (%s): %s\n", path, strerror(errno));
+	glibc_close(rd);
+
+	if (!create) {
+		int err = truncate(vf->redirect, filesize(vf->src));
+		if (err)
+			printf("Failed to truncate redirect file for (%s): %s\n", path, strerror(errno));
+	}
+
 	vf->writes = NULL;
 	vf->next = vfiles;
 	vfiles = vf;
@@ -183,6 +228,7 @@ struct vfile *find_by_path(const char *path, int create)
 
 void merge_range(struct vfile *vf, off_t begin, off_t end)
 {
+	// find all ranges overlapping with begin and end
 	struct range *overlap = malloc(sizeof(struct range));
 	overlap->begin = begin;
 	overlap->end = end;
@@ -193,6 +239,9 @@ void merge_range(struct vfile *vf, off_t begin, off_t end)
 	while (writes) {
 		struct range *next = writes->next;
 		if (end >= writes->begin && begin <= writes->end) {
+			if (writes == vf->writes)
+				vf->writes = writes->next;
+
 			if (writes->prev)
 				writes->prev->next = writes->next;
 			if (writes->next)
@@ -204,6 +253,7 @@ void merge_range(struct vfile *vf, off_t begin, off_t end)
 		writes = next;
 	}
 
+	// find the smallest begin and largest end
 	off_t b = end;
 	off_t e = begin;
 	while (overlap) {
@@ -211,14 +261,15 @@ void merge_range(struct vfile *vf, off_t begin, off_t end)
 			b = overlap->begin;
 		if (overlap->end > e)
 			e = overlap->end;
+		struct range *free_me = overlap;
 		overlap = overlap->next;
-		// free(overlap->prev); // TODO: figure out how to do this correctly
+		free(free_me);
 	}
 
+	// add back to write ranges for vfile
 	struct range *merged = malloc(sizeof(struct range));
 	merged->begin = b;
 	merged->end = e;
-
 	merged->prev = NULL;
 	merged->next = vf->writes;
 	if (vf->writes)
@@ -235,7 +286,7 @@ int next_fd()
 }
 
 // retrieves entry from fd_map, creates one if doesn't already exist
-struct file_desc *get_fd(int fd)
+struct file_desc *get_vfd(int fd)
 {
 	struct file_desc *vfd = fd_map[fd];
 	if (!vfd) {
@@ -276,7 +327,7 @@ void crash() { cur_txn = NULL; }
 int fsync_dir(char *path)
 {
 	char *dir = dirname(path);
-	int fd = glibc_open(dir, O_RDWR);
+	int fd = glibc_open(dir, O_DIRECTORY);
 	int ret = fsync(fd);
 	glibc_close(fd);
 	return ret;
@@ -375,10 +426,20 @@ int replay_log()
 
 void write_to_log(const char *entry)
 {
+	int log_fd = glibc_open(redo_log, O_APPEND | O_RDWR);
+	if (log_fd == -1) {
+		printf("Error opening log: %s\n", strerror(errno));
+		return;
+	}
+
 	int written = glibc_write(log_fd, entry, strlen(entry));
-	if (written != strlen(entry))
+	if (written != strlen(entry)) {
 		printf("Error writing to log: (actual -> %d) vs (expected -> %zd) %s\n",
 			written, strlen(entry), strerror(errno));
+		return;
+	}
+
+	glibc_close(log_fd);
 }
 
 int persist_all_data()
@@ -398,9 +459,10 @@ int persist_all_data()
 	glibc_close(ld);
 
 	// commit entry indicates log is complete
+	int log_fd = glibc_open(redo_log, O_RDWR);
 	fsync(log_fd);
-	write_to_log("commit\n");
 	glibc_close(log_fd);
+	write_to_log("commit\n");
 
 	return 0;
 }
@@ -427,11 +489,12 @@ int begin_txn(void)
 			return -1;
 		}
 
-		log_fd = glibc_open(redo_log, O_CREAT | O_TRUNC | O_RDWR, 0644);
+		int log_fd = glibc_open(redo_log, O_CREAT | O_TRUNC | O_RDWR, 0644);
 		if (log_fd == -1) {
 			printf("Unable to make log at %s: (%s)\n", redo_log, strerror(errno));
 			return -1;
 		}
+		glibc_close(log_fd);
 	}
 
 	struct txn *new_txn = malloc(sizeof(struct txn));
@@ -674,7 +737,7 @@ ssize_t read(int fd, void *buf, size_t count)
 	redo();
 
 	if (cur_txn) {
-		struct file_desc *vfd =  get_fd(fd);
+		struct file_desc *vfd = get_vfd(fd);
 
 		// read src data
 		int src = glibc_open(vfd->file->src, O_RDONLY);
@@ -711,8 +774,8 @@ ssize_t write(int fd, const void *buf, size_t count)
 	redo();
 
 	if (cur_txn) {
-		// first check fd_map for fd, otherwise, get map fd to new file_desc
-		struct file_desc *vfd = get_fd(fd);
+		// first check fd_map for fd, otherwise, map fd to new file_desc
+		struct file_desc *vfd = get_vfd(fd);
 
 		// if file has been removed, don't write
 		if (strlen(vfd->file->path) == 0)
@@ -746,7 +809,7 @@ int ftruncate(int fd, off_t length)
 	redo();
 
 	if (cur_txn) {
-		struct file_desc *vfd = get_fd(fd);
+		struct file_desc *vfd = get_vfd(fd);
 
 		// if extends past file, include write range
 		if (length > filesize(vfd->file->redirect))

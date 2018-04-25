@@ -18,7 +18,7 @@ struct file_desc {
 struct vfile {
 	char path[4096+1]; // NULL string if removed
 	char src[4096+1]; // for reading
-	char redirect[4096+1];
+	char redirect[4096+1]; // size of redirect should change with transaction
 	struct range *writes;
 
 	struct vfile *next;
