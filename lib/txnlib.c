@@ -398,8 +398,8 @@ int persist_all_data()
 	glibc_close(ld);
 
 	// commit entry indicates log is complete
-	write_to_log("commit\n");
 	fsync(log_fd);
+	write_to_log("commit\n");
 	glibc_close(log_fd);
 
 	return 0;
