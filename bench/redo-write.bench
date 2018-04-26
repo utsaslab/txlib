@@ -8,29 +8,30 @@
 ============================================
 > in memory...
 - > append...
-- - > single:  0s      3415ns
-- - > short:   0s     19119ns
-- - > long:    0s    177658ns
+- - > single:  0s      5671ns
+- - > short:   0s     38251ns
+- - > long:    0s    389846ns
 - > overwrite...
-- - > single:  0s      1523ns
-- - > short:   0s     15966ns
-- - > long:    0s    200988ns
+- - > single:  0s      3604ns
+- - > short:   0s     33025ns
+- - > long:    0s    579989ns
 > ending fsync()...
 - > append...
-- - > single:  0s   1648481ns
-- - > short:   0s   1363473ns
-- - > long:    0s   4792809ns
+- - > single:  0s   1560604ns
+- - > short:   0s   2848218ns
+- - > long:    0s   6214975ns
 - > overwrite...
-- - > single:  0s   4776837ns
-- - > short:   0s   4819297ns
-- - > long:    0s   5131783ns
+- - > single:  0s   2998953ns
+- - > short:   0s   3251926ns
+- - > long:    0s   4371201ns
 > transactional...
 - > append...
-- - > single:  0s  13624887ns (overhead: mem -> 3989.72x, fsync ->    8.27x)
-- - > short:   0s  16119689ns (overhead: mem ->  843.12x, fsync ->   11.82x)
-- - > long:    0s  20445724ns (overhead: mem ->  115.08x, fsync ->    4.27x)
+- - > single:  0s  17658108ns (overhead: mem -> 3113.76x, fsync ->   11.31x)
+- - > short:   0s  17802150ns (overhead: mem ->  465.40x, fsync ->    6.25x)
+- - > long:    0s  25649735ns (overhead: mem ->   65.79x, fsync ->    4.13x)
 - > overwrite...
-- - > single:  0s  16503751ns (overhead: mem -> 10836.34x, fsync ->    3.45x)
-- - > short:   0s  17443728ns (overhead: mem -> 1092.55x, fsync ->    3.62x)
-- - > long:    0s  21923850ns (overhead: mem ->  109.08x, fsync ->    4.27x)
+- - > single:  0s  17879445ns (overhead: mem -> 4961.00x, fsync ->    5.96x)
+- - > short:   0s  19914343ns (overhead: mem ->  603.01x, fsync ->    6.12x)
+- - > long:    0s  23778400ns (overhead: mem ->   41.00x, fsync ->    5.44x)
 ============================================
+

@@ -1,4 +1,5 @@
 #include <fcntl.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <sys/stat.h>
@@ -7,7 +8,6 @@
 
 #include "txnlib.h"
 
-#define GB 1073741824
 #define WRITE_SIZE 8192
 
 // nanoseconds
@@ -22,30 +22,48 @@ unsigned long time_passed(struct timeval start, struct timeval finish)
 int main()
 {
         // make random noise
-        char noise[65536];
+        char noise[WRITE_SIZE];
         int fd = open("/dev/random", O_RDONLY);
         read(fd, noise, sizeof(noise));
         close(fd);
 
-        int id = begin_txn();
+        // testing parameters
+        int start_pow = 15;
+        int range = 20;
+        unsigned long filesizes[range];
+        for (int i = 0; i < range; i++)
+                filesizes[i] = (unsigned long) pow(2, start_pow + i);
 
-        int fd1 = open("out/big-writes.out", O_CREAT | O_TRUNC | O_RDWR, 0644);
-        for (int i = 0; i < GB / sizeof(noise); i++)
-                write(fd1, noise, sizeof(noise));
+        printf("  ++++++++++++++++++++++++++++++++++\n");
+        printf("  +  Benchmarking redo() runtimes  +\n");
+        printf("  ++++++++++++++++++++++++++++++++++\n");
+        printf(" - filesize (in bytes): multiples of 2 from %ld to %ld\n", filesizes[0], filesizes[range-1]);
+        printf("============================================\n");
 
-        save_log(NULL);
-        end_txn(id);
+        for (int i = 0; i < range; i++) {
+                printf("> 2^%2d: ", i + start_pow); fflush(stdout);
 
-        // set up to redo
-        set_bypass(1);
-        remove("out/big-writes.out");
-        set_bypass(0);
+                // generate and save redo log
+                int id = begin_txn();
+                int fd1 = open("out/big-writes.out", O_CREAT | O_TRUNC | O_RDWR, 0644);
+                int idk = filesizes[i] / WRITE_SIZE;
+                for (int i = 0; i < idk; i++)
+                        write(fd1, noise, sizeof(noise));
+                save_log(NULL);
+                end_txn(id);
 
-        struct timeval start, finish;
-        gettimeofday(&start, NULL);
-        redo();
-        gettimeofday(&finish, NULL);
+                // resets
+                set_bypass(1);
+                remove("out/big-writes.out");
+                set_bypass(0);
 
-	unsigned long runtime = time_passed(start, finish);
-        printf("redo() after writing 1 GB: %lds %ldns\n", runtime / 1000000000, runtime % 1000000000);
+                // time redo()
+                struct timeval start, finish;
+                gettimeofday(&start, NULL);
+                redo();
+                gettimeofday(&finish, NULL);
+
+                unsigned long runtime = time_passed(start, finish);
+                printf("%2lds %9ldns\n", runtime / 1000000000, runtime % 1000000000);
+        }
 }

@@ -6,9 +6,9 @@
  - type: file, directory
 ============================================
 - > txnless:
-- - > file:  0s      5393ns
-- - > dir:   0s      9518ns
+- - > file:  0s      8561ns
+- - > dir:   0s     13137ns
 - > txnl:
-- - > file:  0s    233105ns (overhead:   43.22x)
-- - > dir:   0s    268884ns (overhead:   28.25x)
+- - > file:  0s    291811ns (overhead:   34.09x)
+- - > dir:   0s    315243ns (overhead:   24.00x)
 ============================================

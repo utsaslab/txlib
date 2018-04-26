@@ -57,7 +57,7 @@ unsigned long multiremove(int count, int txn, int file)
                 if (txn) {
                         end_txn(txn_id);
                 } else {
-                        int dir = open("out/remove", O_RDWR);
+                        int dir = open("out/remove", O_DIRECTORY);
                         fsync(dir);
                         close(dir);
                 }
@@ -120,13 +120,27 @@ unsigned long multiwrite(int buf_size, int count, int durability, int overwrite,
                 set_bypass(1);
                 system(cmd);
                 set_bypass(0);
+
+                int dir = open("out", O_DIRECTORY);
+                fsync(dir);
+                close(dir);
+
+                int fd = open(working_file, O_RDWR);
+                fsync(fd);
+                close(fd);
         }
 
         unsigned long runtime = 0;
         for (int i = 0; i < count; i++) {
                 struct timeval start, finish;
-                if (!overwrite)
+                if (!overwrite) {
                         remove(working_file);
+                        if (durability) {
+                                int dir = open("out", O_DIRECTORY);
+                                fsync(dir);
+                                close(dir);
+                        }
+                }
 
                 // change the buffer each time just in case
                 char buf[buf_size];
@@ -144,9 +158,11 @@ unsigned long multiwrite(int buf_size, int count, int durability, int overwrite,
 
                         if (durability == 1) {
                                 fsync(fd);
-                                int dir = open("out", O_RDWR);
-                                fsync(dir);
-                                close(dir);
+                                if (!overwrite) {
+                                        int dir = open("out", O_DIRECTORY);
+                                        fsync(dir);
+                                        close(dir);
+                                }
                         }
 
                         if (durability == 2)
@@ -157,6 +173,12 @@ unsigned long multiwrite(int buf_size, int count, int durability, int overwrite,
                 close(fd);
                 runtime += time_passed(start, finish);
         }
+
+        // cleanup
+        remove(working_file);
+        int dir = open("out", O_DIRECTORY);
+        fsync(dir);
+        close(dir);
 
         return runtime / count;
 }
@@ -310,7 +332,7 @@ unsigned long multiswap(int buf_size, int count, int txn, unsigned long filesize
                 } else {
                         rename(working_backup, working_file);
                         fsync(fd);
-                        int dir = open("out", O_RDWR);
+                        int dir = open("out", O_DIRECTORY);
                         fsync(dir);
                         close(dir);
                 }
@@ -336,7 +358,7 @@ void swapbench()
         printf("  ++++++++++++++++++++++++++\n");
         printf(" - count: %d\n", count);
         printf(" - method: swap, txn\n");
-        printf(" - filesize: multiples of 2 from %ld to %ld\n", filesizes[0], filesizes[range-1]);
+        printf(" - filesize (in bytes): multiples of 2 from %ld to %ld\n", filesizes[0], filesizes[range-1]);
         printf("============================================\n");
 
         unsigned long swap_times[range];

@@ -43,7 +43,7 @@ benchmark:
 
 big-writes:
 	rm -rf $(OUTDIR); mkdir $(OUTDIR) && \
-	gcc $(BENCHDIR)/big-writes.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/big-writes -ldl && \
+	gcc $(BENCHDIR)/big-writes.c -I$(LIBDIR) -L. -ltxn -o $(OUTDIR)/big-writes -ldl -lm && \
 	LD_PRELOAD=$(shell pwd)/libtxn.so LD_LIBRARY_PATH=$(shell pwd) ./$(OUTDIR)/big-writes \
 
 fsx:
