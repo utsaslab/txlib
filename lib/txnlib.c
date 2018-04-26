@@ -334,26 +334,58 @@ struct file_desc *get_vfd(int fd)
 
 // ========== redo log methods ==========
 
-int fsync_dir(char *path)
+struct path *to_fsync = NULL;
+
+// only adds if unique
+void fsync_later(const char *path)
 {
-	char *dir = dirname(path);
-	int fd = glibc_open(dir, O_DIRECTORY);
-	int ret = fsync(fd);
-	glibc_close(fd);
-	return ret;
+	struct path *tf = to_fsync;
+	while (tf) {
+		if (strcmp(path, tf->name) == 0)
+			return;
+		tf = tf->next;
+	}
+
+	tf = malloc(sizeof(struct path));
+	snprintf(tf->name, sizeof(tf->name), "%s", path);
+	tf->next = to_fsync;
+	to_fsync = tf;
+}
+
+int is_dir(const char *path)
+{
+	struct stat st;
+	stat(path, &st);
+	return S_ISDIR(st.st_mode);
+}
+
+void fsync_now()
+{
+	while (to_fsync) {
+		struct path *tf = to_fsync;
+		to_fsync = to_fsync->next;
+
+		int fd = glibc_open(tf->name, (is_dir(tf->name)) ? O_DIRECTORY : O_WRONLY);
+		fsync(fd);
+		glibc_close(fd);
+
+		free(tf);
+	}
 }
 
 int redo_mkdir(char *path, mode_t mode)
 {
 	int ret = glibc_mkdir(path, mode);
-	fsync_dir(path);
+	fsync_later(path);
+	fsync_later(dirname(path));
 	return ret;
 }
 
 int redo_create(char *path, mode_t mode)
 {
 	glibc_close(glibc_open(path, O_CREAT, mode));
-	fsync_dir(path);
+	fsync_later(path);
+	fsync_later(dirname(path));
 	return 0;
 }
 
@@ -368,8 +400,9 @@ int redo_write(char *path, off_t pos, off_t length, const char *datapath)
 	int fd = glibc_open(path, O_RDWR);
 	glibc_lseek(fd, pos, SEEK_SET);
 	ssize_t written = glibc_write(fd, buf, length);
-	fsync(fd);
 	glibc_close(fd);
+
+	fsync_later(path);
 
 	return !(written == length);
 }
@@ -377,21 +410,27 @@ int redo_write(char *path, off_t pos, off_t length, const char *datapath)
 int redo_remove(char *path)
 {
 	int ret = glibc_remove(path);
-	fsync_dir(path);
+	fsync_later(dirname(path));
 	return ret;
 }
 
 int redo_rename(char *src, char *dest)
 {
 	int ret = glibc_rename(src, dest);
-	fsync_dir(src);
-	fsync_dir(dest);
+	fsync_later(dirname(src));
+	fsync_later(dirname(dest));
 	return ret;
 }
 
 int redo_truncate(char *path, off_t length)
 {
-	return truncate(path, length);
+	int fd = glibc_open(path, O_RDWR);
+	int ret = glibc_ftruncate(fd, length);
+	glibc_close(fd);
+
+	fsync_later(path);
+
+	return ret;
 }
 
 // returns nonzero if failed
@@ -431,6 +470,9 @@ int replay_log()
 		}
 	}
 	fclose(fp);
+
+	fsync_now();
+
 	return 0;
 }
 

@@ -32,6 +32,11 @@ struct range {
 	struct range *next;
 };
 
+struct path {
+	char name[4096+1];
+	struct path *next;
+};
+
 // txnlib API
 int begin_txn(void);
 int end_txn(int txn_id);
