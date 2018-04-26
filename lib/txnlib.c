@@ -350,9 +350,9 @@ int redo_mkdir(char *path, mode_t mode)
 	return ret;
 }
 
-int redo_create(char *path)
+int redo_create(char *path, mode_t mode)
 {
-	glibc_close(glibc_open(path, O_CREAT, 0644));
+	glibc_close(glibc_open(path, O_CREAT, mode));
 	fsync_dir(path);
 	return 0;
 }
@@ -361,18 +361,11 @@ int redo_write(char *path, off_t pos, off_t length, const char *datapath)
 {
 	char buf[length];
 	int rd = glibc_open(datapath, O_RDWR);
-	if (rd == -1) {
-		printf("Failed to open redirect file in redo_write() for (%s): %s\n", path, strerror(errno));
-		return -1;
-	}
 	glibc_lseek(rd, pos, SEEK_SET);
 	glibc_read(rd, buf, length);
 	glibc_close(rd);
 
 	int fd = glibc_open(path, O_RDWR);
-	if (fd == -1) {
-		printf("Attempting to write to nonexistent file (%s) in redo_write(): %s\n", path, strerror(errno));
-	}
 	glibc_lseek(fd, pos, SEEK_SET);
 	ssize_t written = glibc_write(fd, buf, length);
 	fsync(fd);
@@ -413,8 +406,9 @@ int replay_log()
 			mode_t mode = atoi(nexttok(NULL));
 			redo_mkdir(path, mode);
 		} else if (strcmp(op, "create") == 0) {
-			char *path = strtok(nexttok(NULL), "\n");
-			redo_create(path);
+			char *path = nexttok(NULL);
+			mode_t mode = atoi(nexttok(NULL));
+			redo_create(path, mode);
 		} else if (strcmp(op, "write") == 0) {
 			char *path = nexttok(NULL);
 			off_t pos = atoi(nexttok(NULL));
@@ -616,13 +610,27 @@ int open(const char *pathname, int flags, ...)
 
 	if (cur_txn) {
 		char *rp = realpath_missing(pathname);
+		struct vfile *vf = find_by_path(rp, (flags & O_CREAT)); // not null if already seen or actually exists in fs
 
-		// log entry if needed (creating or truncating)
+		if (!vf)
+			return -1;
+
+		// initialize new file_desc to put in fd_map
+		struct file_desc *vfd = malloc(sizeof(struct file_desc));
+		vfd->pos = 0;
+		if (flags & O_TRUNC)
+			truncate(vfd->file->redirect, 0);
+		else if (flags & O_APPEND)
+			vfd->pos = filesize(vfd->file->redirect);
+		vfd->file = vf;
+
+		int ret = next_fd();
+		fd_map[ret] = vfd;
+
+		// perform logging
 		char entry[5000];
-		struct vfile *vf = find_by_path(rp, 0);
 		if (flags & O_CREAT) {
-			vf = find_by_path(rp, 1);
-			snprintf(entry, sizeof(entry), "create %s\n", rp);
+			snprintf(entry, sizeof(entry), "create %s %d\n", rp, mode);
 			write_to_log(entry);
 		}
 		if (flags & O_TRUNC) {
@@ -631,22 +639,6 @@ int open(const char *pathname, int flags, ...)
 		}
 		free(rp);
 
-		if (!vf)
-			return -1;
-
-		struct file_desc *vfd = malloc(sizeof(struct file_desc));
-		if (flags & O_TRUNC) {
-			vfd->pos = 0;
-			truncate(vfd->file->redirect, 0);
-		} else if (flags & O_APPEND) {
-			vfd->pos = filesize(vfd->file->redirect);
-		} else {
-			vfd->pos = 0;
-		}
-		vfd->file = vf;
-
-		int ret = next_fd();
-		fd_map[ret] = vfd;
 		return ret;
 	} else {
 		return glibc_open(pathname, flags, mode);
@@ -704,13 +696,12 @@ int rename(const char *oldpath, const char *newpath)
 		struct vfile *old = find_by_path(old_rp, 0);
 		struct vfile *new = find_by_path(new_rp, 0);
 
-		if (new) {
-			free(old_rp);
-			free(new_rp);
-			return -1;
-		}
-
+		// TODO: need to handle logic in rename() man pages
 		snprintf(old->path, sizeof(old->path), "%s", new_rp);
+
+		// if newpath exists, mark it as deleted in vfiles
+		if (new)
+			new->path[0] = '\0';
 
 		// log operation
 		char entry[10000];
