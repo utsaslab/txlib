@@ -32,6 +32,7 @@ static int (*glibc_lseek)(int fd, off_t offset, int whence);
 static int init = 0;
 static int next_txn_id = 0;
 static int redirect_id = 0;
+static int log_fd = -1;
 static const char *log_dir = "/var/tmp/txnlib";
 static const char *redo_log = "/var/tmp/txnlib/redo-log";
 static const char *bypass = "/var/tmp/txnlib/bypass"; // prevent issues when using system()
@@ -115,11 +116,11 @@ void reset()
 // transaction is committed if log exists and last line is "commit"
 int committed()
 {
-	int log = glibc_open(redo_log, O_RDONLY);
-	if (log == -1)
+	if (log_fd == -1 && access(redo_log, F_OK)) // faster than doing open()
 		return 0;
 
 	char last[8];
+	int log = glibc_open(redo_log, O_RDONLY);
 	glibc_lseek(log, -7, SEEK_END);
 	glibc_read(log, last, 7);
 	last[7] = '\0';
@@ -279,7 +280,7 @@ void merge_range(struct vfile *vf, off_t begin, off_t end)
 
 int next_fd()
 {
-	for (int i = 0; i < FD_MAX; i++)
+	for (int i = 3; i < FD_MAX; i++) // skip 0, 1, 2
 		if (!fd_map[i] && !fcntl(i, F_GETFD)) // also check it is not a valid open fd
 			return i;
 	return -1;
@@ -323,7 +324,8 @@ struct file_desc *get_vfd(int fd)
 		}
 
 		vfd = malloc(sizeof(struct file_desc));
-		vfd->pos = glibc_lseek(fd, 0, SEEK_CUR);
+		vfd->rd_fd = glibc_open(vf->redirect, O_RDWR); // if fd hasn't been seen, then we need to init this ourselves
+		glibc_lseek(vfd->rd_fd, glibc_lseek(fd, 0, SEEK_CUR), SEEK_CUR); // set position to that of original fd
 		vfd->file = vf;
 		fd_map[fd] = vfd;
 
@@ -480,20 +482,10 @@ int replay_log()
 
 void write_to_log(const char *entry)
 {
-	int log = glibc_open(redo_log, O_APPEND | O_RDWR);
-	if (log == -1) {
-		printf("Error opening log: %s\n", strerror(errno));
-		return;
-	}
-
-	int written = glibc_write(log, entry, strlen(entry));
-	if (written != strlen(entry)) {
+	int written = glibc_write(log_fd, entry, strlen(entry));
+	if (written != strlen(entry))
 		printf("Error writing to log: (actual -> %d) vs (expected -> %zd) %s\n",
 			written, strlen(entry), strerror(errno));
-		return;
-	}
-
-	glibc_close(log);
 }
 
 int persist_all_data()
@@ -503,7 +495,6 @@ int persist_all_data()
 	while (vf) {
 		int fd = glibc_open(vf->redirect, O_RDONLY);
 		fsync(fd);
-		glibc_close(fd);
 		vf = vf->next;
 	}
 
@@ -513,10 +504,10 @@ int persist_all_data()
 	glibc_close(ld);
 
 	// commit entry indicates log is complete
-	int log = glibc_open(redo_log, O_RDWR);
-	fsync(log);
-	glibc_close(log);
+	fsync(log_fd);
 	write_to_log("commit\n"); // do not need to call fsync() after, it's there or it isn't
+	glibc_close(log_fd);
+	log_fd = -1;
 
 	return 0;
 }
@@ -543,12 +534,11 @@ int begin_txn(void)
 			return -1;
 		}
 
-		int log_fd = glibc_open(redo_log, O_CREAT | O_TRUNC | O_RDWR, 0644);
+		log_fd = glibc_open(redo_log, O_CREAT | O_TRUNC | O_RDWR, 0644);
 		if (log_fd == -1) {
 			printf("Unable to make log at %s: (%s)\n", redo_log, strerror(errno));
 			return -1;
 		}
-		glibc_close(log_fd);
 	}
 
 	struct txn *new_txn = malloc(sizeof(struct txn));
@@ -659,11 +649,7 @@ int open(const char *pathname, int flags, ...)
 
 		// initialize new file_desc to put in fd_map
 		struct file_desc *vfd = malloc(sizeof(struct file_desc));
-		vfd->pos = 0;
-		if (flags & O_TRUNC)
-			truncate(vfd->file->redirect, 0);
-		else if (flags & O_APPEND)
-			vfd->pos = filesize(vfd->file->redirect);
+		vfd->rd_fd = glibc_open(vf->redirect, O_RDWR | flags);
 		vfd->file = vf;
 
 		int ret = next_fd();
@@ -698,6 +684,7 @@ int close(int fd)
 		if (!vfd)
 			return -1;
 
+		glibc_close(vfd->rd_fd);
 		free(vfd);
 		fd_map[fd] = NULL;
 		return 0;
@@ -796,16 +783,18 @@ ssize_t read(int fd, void *buf, size_t count)
 		if (!vfd)
 			return 0;
 
+		off_t cur = glibc_lseek(vfd->rd_fd, 0, SEEK_CUR);
+
 		// read src data
 		int src = glibc_open(vfd->file->src, O_RDONLY);
-		glibc_lseek(src, vfd->pos, SEEK_SET);
+		glibc_lseek(src, cur, SEEK_SET);
 		ssize_t red = glibc_read(src, buf, count);
 		glibc_close(src);
-		vfd->pos += red;
+		glibc_lseek(vfd->rd_fd, red, SEEK_CUR);
 
 		// read redirect data
-		off_t begin = vfd->pos - red;
-		off_t end = vfd->pos;
+		off_t begin = cur;
+		off_t end = cur + red;
 		struct range *writes = vfd->file->writes;
 		int rd = glibc_open(vfd->file->redirect, O_RDONLY);
 		while (writes) {
@@ -841,18 +830,15 @@ ssize_t write(int fd, const void *buf, size_t count)
 			return 0;
 
 		// write data to redirect at offset
-		int rd = glibc_open(vfd->file->redirect, O_CREAT | O_RDWR, 0644);
-		glibc_lseek(rd, vfd->pos, SEEK_SET);
-		ssize_t written = glibc_write(rd, buf, count);
-		glibc_close(rd);
-		vfd->pos += written;
+		ssize_t written = glibc_write(vfd->rd_fd, buf, count);
 
 		// add range to vfile
-		merge_range(vfd->file, vfd->pos - written, vfd->pos);
+		off_t end = glibc_lseek(vfd->rd_fd, 0, SEEK_CUR);
+		merge_range(vfd->file, end - written, end);
 
 		// record entry in log
 		char entry[10000];
-		snprintf(entry, sizeof(entry), "write %s %ld %ld %s\n", vfd->file->path, vfd->pos - written, written, vfd->file->redirect);
+		snprintf(entry, sizeof(entry), "write %s %ld %ld %s\n", vfd->file->path, end - written, written, vfd->file->redirect);
 		write_to_log(entry);
 
 		return written;
@@ -916,15 +902,8 @@ off_t lseek(int fd, off_t offset, int whence)
 
 		if (!vfd)
 			return glibc_lseek(fd, offset, whence);
-
-		if (whence == SEEK_SET)
-			vfd->pos = offset;
-		else if (whence == SEEK_CUR)
-			vfd->pos += offset;
-		else if (whence == SEEK_END)
-			vfd->pos = filesize(vfd->file->redirect) + offset;
-
-		return vfd->pos;
+		else
+			return glibc_lseek(vfd->rd_fd, offset, whence);
 	} else {
 		return glibc_lseek(fd, offset, whence);
 	}

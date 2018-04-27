@@ -11,7 +11,7 @@ struct txn {
 };
 
 struct file_desc {
-	off_t pos;
+	int rd_fd;
 	struct vfile *file;
 };
 
