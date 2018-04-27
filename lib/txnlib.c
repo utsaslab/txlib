@@ -17,6 +17,7 @@
 #include <errno.h>
 
 #define FD_MAX 1024
+#define VFILES_CAPACITY 6113 // some big prime
 
 static int (*glibc_open)(const char *pathname, int flags, ...);
 static int (*glibc_close)(int fd);
@@ -38,8 +39,197 @@ static const char *redo_log = "/var/tmp/txnlib/redo-log";
 static const char *bypass = "/var/tmp/txnlib/bypass"; // prevent issues when using system()
 static struct txn *cur_txn = NULL;
 static struct file_desc *fd_map[FD_MAX];
-static struct vfile *vfiles = NULL;
+static struct vfile_ptr *vfiles_src[VFILES_CAPACITY]; // set
+static struct vfile_ptr *vfiles_path[VFILES_CAPACITY]; // set
 static char *keep_log = NULL;
+
+// returns absolute path even if file doesn't exist (need to free returned pointer)
+char *realpath_missing(const char *path)
+{
+	char *rp = realpath(path, NULL);
+	if (rp)
+		return rp;
+
+	// if the path is missing, then run process bc realpath() cannot resolve missing paths
+	char command[4200]; // ext4 max path length + some more
+	snprintf(command, sizeof(command), "realpath -m %s", path); // -m for missing paths
+
+	int size = 4096+2; // 2: 1 for newline + 1 for null term
+	rp = calloc(size, 1);
+
+	set_bypass(1);
+	FILE *out = popen(command, "r");
+	fgets(rp, size, out);
+	pclose(out);
+	rp[strlen(rp)-1] = '\0'; // trim the newline off
+	set_bypass(0);
+
+	return rp;
+}
+
+// (need to free returned pointer)
+char *get_path_from_fd(int fd)
+{
+	char *path = calloc(4096+1, 1);
+	char link[128];
+	snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+	readlink(link, path, 4096);
+	return path;
+}
+
+// custom implementation of parsing undo logs
+char *nexttok(char *line) { return strtok(line, line ? " \n" : " "); }
+
+off_t filesize(const char *path)
+{
+	struct stat metadata;
+	return (stat(path, &metadata) == 0) ? metadata.st_size : -1;
+}
+
+// fstat is weird, so we have to be weird too
+int glibc_fstat(int fd, struct stat *statbuf) { return glibc_fxstat(_STAT_VER, fd, statbuf); }
+
+// ========== vfiles ==========
+
+// http://www.cse.yorku.ca/~oz/hash.html
+unsigned long hash(const char *path)
+{
+	unsigned long hash = 5381;
+	int c;
+	const char *str = path;
+
+	while ((c = *str++))
+		hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+
+	return hash % VFILES_CAPACITY;
+}
+
+struct vfile_ptr *add_by_src(struct vfile *vf)
+{
+	unsigned long hashcode = hash(vf->src);
+
+	struct vfile_ptr *vfp = malloc(sizeof(struct vfile_ptr));
+	vfp->vf = vf;
+	vfp->prev = NULL;
+	vfp->next = vfiles_src[hashcode];
+	if (vfp->next)
+		vfp->next->prev = vfp;
+	vfiles_src[hashcode] = vfp;
+
+	return vfp;
+}
+
+struct vfile_ptr *add_by_path(struct vfile *vf)
+{
+	unsigned long hashcode = hash(vf->path);
+
+	struct vfile_ptr *vfp = malloc(sizeof(struct vfile_ptr));
+	vfp->vf = vf;
+	vfp->prev = NULL;
+	vfp->next = vfiles_path[hashcode];
+	if (vfp->next)
+		vfp->next->prev = vfp;
+	vfiles_path[hashcode] = vfp;
+
+	return vfp;
+}
+
+void remove_by_path(struct vfile *vf)
+{
+	unsigned long hashcode = hash(vf->path);
+
+	struct vfile_ptr *vfp = vfiles_path[hashcode];
+	while (vfp) {
+		if (vfp->vf == vf) {
+			if (vfp->prev)
+				vfp->prev->next = vfp->next;
+			if (vfp->next)
+				vfp->next->prev = vfp->prev;
+			if (vfp == vfiles_path[hashcode])
+				vfiles_path[hashcode] = vfp->next;
+			free(vfp);
+			break;
+		}
+		vfp = vfp->next;
+	}
+}
+
+struct vfile_ptr *find_by_src(const char *src)
+{
+	unsigned long hashcode = hash(src);
+	struct vfile_ptr *vfp = vfiles_src[hashcode];
+	while (vfp) {
+		if (strcmp(src, vfp->vf->src) == 0)
+			return vfp;
+		vfp = vfp->next;
+	}
+	return NULL;
+}
+
+// will create node if not yet existing
+struct vfile_ptr *find_by_path(const char *path, int create)
+{
+	unsigned long hashcode = hash(path);
+	struct vfile_ptr *vfp = vfiles_path[hashcode];
+	while (vfp) {
+		if (strcmp(path, vfp->vf->path) == 0)
+			return vfp;
+		vfp = vfp->next;
+	}
+
+	// if not creating, then return NULL if deleted or doesn't really exist
+	if (!create && (find_by_src(path) || access(path, F_OK)))
+		return NULL;
+
+	// create and initialize, then add to vfiles
+	struct vfile *vf = malloc(sizeof(struct vfile));
+	snprintf(vf->path, sizeof(vf->path), "%s", path);
+	snprintf(vf->src, sizeof(vf->src), "%s", path);
+	snprintf(vf->redirect, sizeof(vf->redirect), "%s/%d.rd", log_dir, redirect_id++);
+
+	int rd = glibc_open(vf->redirect, O_CREAT, 0644);
+	if (rd == -1)
+		printf("Failed to create redirect file for (%s): %s\n", path, strerror(errno));
+	glibc_close(rd);
+
+	if (!create) {
+		int err = truncate(vf->redirect, filesize(vf->src));
+		if (err)
+			printf("Failed to truncate redirect file in find_by_path() for (%s): %s\n", path, strerror(errno));
+	}
+
+	vf->writes = NULL;
+
+	// add to vfiles_path and vfiles_src
+	add_by_src(vf);
+	return add_by_path(vf);
+}
+
+void cleanup_all_vfiles()
+{
+	for (int i = 0; i < sizeof(vfiles_src) / sizeof(vfiles_src[0]); i++) {
+		struct vfile_ptr *vfp = vfiles_src[i];
+		while (vfp) {
+			struct vfile_ptr *free_me = vfp;
+			vfp = vfp->next;
+			if (strlen(free_me->vf->path) == 0) // if not in vfiles_path (avoid double free)
+				free(free_me->vf);
+			free(free_me);
+		}
+		vfiles_src[i] = NULL;
+	}
+
+	for (int i = 0; i < sizeof(vfiles_path) / sizeof(vfiles_path[0]); i++) {
+		struct vfile_ptr *vfp = vfiles_path[i];
+		while (vfp) {
+			struct vfile_ptr *free_me = vfp;
+			vfp = vfp->next;
+			// free(free_me->vf); // TODO: figure out why this is double free()
+			free(free_me);
+		}
+		vfiles_path[i] = NULL;
+	}
+}
 
 // ========== helper methods ==========
 
@@ -99,13 +289,7 @@ void reset()
 		}
 	}
 
-	struct vfile *vf = vfiles;
-	while (vf) {
-		struct vfile *free_me = vf;
-		vf = vf->next;
-		free(free_me);
-	}
-	vfiles = NULL;
+	cleanup_all_vfiles();
 
 	if (keep_log) {
 		free(keep_log);
@@ -130,102 +314,7 @@ int committed()
 	return strcmp(last, "commit\n") == 0;
 }
 
-// returns absolute path even if file doesn't exist (need to free returned pointer)
-char *realpath_missing(const char *path)
-{
-	char *rp = realpath(path, NULL);
-	if (rp)
-		return rp;
-
-	// if the path is missing, then run process bc realpath() cannot resolve missing paths
-	char command[4200]; // ext4 max path length + some more
-	snprintf(command, sizeof(command), "realpath -m %s", path); // -m for missing paths
-
-	int size = 4096+2; // 2: 1 for newline + 1 for null term
-	rp = calloc(size, 1);
-
-	set_bypass(1);
-	FILE *out = popen(command, "r");
-	fgets(rp, size, out);
-	pclose(out);
-	rp[strlen(rp)-1] = '\0'; // trim the newline off
-	set_bypass(0);
-
-	return rp;
-}
-
-// (need to free returned pointer)
-char *get_path_from_fd(int fd)
-{
-	char *path = calloc(4096+1, 1);
-	char link[128];
-	snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
-	readlink(link, path, 4096);
-	return path;
-}
-
-// custom implementation of parsing undo logs
-char *nexttok(char *line) { return strtok(line, line ? " \n" : " "); }
-
-off_t filesize(const char *path)
-{
-	struct stat metadata;
-	return (stat(path, &metadata) == 0) ? metadata.st_size : -1;
-}
-
-// fstat is weird, so we have to be weird too
-int glibc_fstat(int fd, struct stat *statbuf) { return glibc_fxstat(_STAT_VER, fd, statbuf); }
-
 // ========== fd_map + vfiles ==========
-
-struct vfile *find_by_src(const char *src)
-{
-	struct vfile *vf = vfiles;
-	while (vf) {
-		if (strcmp(src, vf->src) == 0)
-			return vf;
-		vf = vf->next;
-	}
-	return NULL;
-}
-
-// will create node if not yet existing
-struct vfile *find_by_path(const char *path, int create)
-{
-	struct vfile *vf = vfiles;
-	while (vf) {
-		if (strcmp(path, vf->path) == 0)
-			return vf;
-		vf = vf->next;
-	}
-
-	// if not creating, then return NULL if deleted or doesn't really exist
-	if (!create && (find_by_src(path) || access(path, F_OK)))
-		return NULL;
-
-	// create and initialize, then add to vfiles
-	vf = malloc(sizeof(struct vfile));
-	snprintf(vf->path, sizeof(vf->path), "%s", path);
-	snprintf(vf->src, sizeof(vf->src), "%s", path);
-	snprintf(vf->redirect, sizeof(vf->redirect), "%s/%d.rd", log_dir, redirect_id++);
-
-	int rd = glibc_open(vf->redirect, O_CREAT, 0644);
-	if (rd == -1)
-		printf("Failed to create redirect file for (%s): %s\n", path, strerror(errno));
-	glibc_close(rd);
-
-	if (!create) {
-		int err = truncate(vf->redirect, filesize(vf->src));
-		if (err)
-			printf("Failed to truncate redirect file in find_by_path() for (%s): %s\n", path, strerror(errno));
-	}
-
-	vf->writes = NULL;
-	vf->next = vfiles;
-	vfiles = vf;
-
-	return vf;
-}
 
 void merge_range(struct vfile *vf, off_t begin, off_t end)
 {
@@ -299,7 +388,8 @@ struct file_desc *get_vfd(int fd)
 		if (strlen(path) == 0)
 			return NULL;
 
-		struct vfile *vf = find_by_src(path);
+		struct vfile_ptr *vfp = find_by_src(path);
+		struct vfile *vf = (vfp) ? vfp->vf : NULL;
 		if (!vf) {
 			// if not in vfiles, then it hasn't been touched within the txn
 			vf = malloc(sizeof(struct vfile));
@@ -318,9 +408,9 @@ struct file_desc *get_vfd(int fd)
 
 			vf->writes = NULL;
 
-			// add to vfiles
-			vf->next = vfiles;
-			vfiles = vf;
+			// add to vfiles_src + vfiles_path
+			add_by_src(vf);
+			add_by_path(vf);
 		}
 
 		vfd = malloc(sizeof(struct file_desc));
@@ -490,12 +580,15 @@ void write_to_log(const char *entry)
 
 int persist_all_data()
 {
-	// persist all redirects
-	struct vfile *vf = vfiles;
-	while (vf) {
-		int fd = glibc_open(vf->redirect, O_RDONLY);
-		fsync(fd);
-		vf = vf->next;
+	// only need to persist in vfiles_path
+	for (int i = 0; i < sizeof(vfiles_path) / sizeof(vfiles_path[0]); i++) {
+		struct vfile_ptr *vfp = vfiles_path[i];
+		while (vfp) {
+			int fd = glibc_open(vfp->vf->redirect, O_WRONLY);
+			fsync(fd);
+			glibc_close(fd);
+			vfp = vfp->next;
+		}
 	}
 
 	// also need to persist log directory
@@ -539,6 +632,11 @@ int begin_txn(void)
 			printf("Unable to make log at %s: (%s)\n", redo_log, strerror(errno));
 			return -1;
 		}
+
+		for (int i = 0; i < sizeof(vfiles_path) / sizeof(vfiles_path[0]); i++)
+			vfiles_path[i] = NULL;
+		for (int i = 0; i < sizeof(vfiles_src) / sizeof(vfiles_src[0]); i++)
+			vfiles_src[i] = NULL;
 	}
 
 	struct txn *new_txn = malloc(sizeof(struct txn));
@@ -642,15 +740,15 @@ int open(const char *pathname, int flags, ...)
 
 	if (cur_txn) {
 		char *rp = realpath_missing(pathname);
-		struct vfile *vf = find_by_path(rp, (flags & O_CREAT)); // not null if already seen or actually exists in fs
+		struct vfile_ptr *vfp = find_by_path(rp, (flags & O_CREAT)); // not null if already seen or actually exists in fs
 
-		if (!vf)
+		if (!vfp)
 			return -1;
 
 		// initialize new file_desc to put in fd_map
 		struct file_desc *vfd = malloc(sizeof(struct file_desc));
-		vfd->rd_fd = glibc_open(vf->redirect, O_RDWR | flags);
-		vfd->file = vf;
+		vfd->rd_fd = glibc_open(vfp->vf->redirect, O_RDWR | flags);
+		vfd->file = vfp->vf;
 
 		int ret = next_fd();
 		fd_map[ret] = vfd;
@@ -722,15 +820,23 @@ int rename(const char *oldpath, const char *newpath)
 	if (cur_txn) {
 		char *old_rp = realpath_missing(oldpath);
 		char *new_rp = realpath_missing(newpath);
-		struct vfile *old = find_by_path(old_rp, 0);
-		struct vfile *new = find_by_path(new_rp, 0);
+		struct vfile_ptr *old = find_by_path(old_rp, 0);
+		struct vfile_ptr *new = find_by_path(new_rp, 0);
 
 		// TODO: need to handle logic in rename() man pages
-		snprintf(old->path, sizeof(old->path), "%s", new_rp);
+		// readd to vfiles_path
+		snprintf(old->vf->path, sizeof(old->vf->path), "%s", new_rp);
+		struct vfile *vf = old->vf;
+		remove_by_path(old->vf);
 
 		// if newpath exists, mark it as deleted in vfiles
-		if (new)
-			new->path[0] = '\0';
+		if (new) {
+			new->vf->path[0] = '\0';
+			// remove from vfiles_path
+			remove_by_path(new->vf);
+		}
+
+		add_by_path(vf);
 
 		// log operation
 		char entry[10000];
@@ -754,12 +860,14 @@ int remove(const char *pathname)
 
 	if (cur_txn) {
 		char *rp = realpath_missing(pathname);
-		struct vfile *vf = find_by_path(rp, 0);
+		struct vfile_ptr *vfp = find_by_path(rp, 0);
 
-		if (!vf)
+		if (!vfp)
 			return -1;
 
-		vf->path[0] = '\0';
+		vfp->vf->path[0] = '\0';
+		// remove from vfiles_path
+		remove_by_path(vfp->vf);
 
 		char entry[5000];
 		snprintf(entry, sizeof(entry), "remove %s\n", rp);

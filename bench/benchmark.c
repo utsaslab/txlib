@@ -394,7 +394,7 @@ int main()
          * 1 -> write
          * 2 -> swap
          */
-        int op = 1;
+        int op = 0;
 
         if (op == 0)
                 removebench();

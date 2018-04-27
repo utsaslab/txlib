@@ -20,8 +20,12 @@ struct vfile {
 	char src[4096+1]; // for reading
 	char redirect[4096+1]; // size of redirect should change with transaction
 	struct range *writes;
+};
 
-	struct vfile *next;
+struct vfile_ptr {
+	struct vfile *vf;
+	struct vfile_ptr *prev;
+	struct vfile_ptr *next;
 };
 
 struct range {

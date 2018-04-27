@@ -1,7 +1,7 @@
 CFLAGS = -Wall
 BENCHDIR = bench
 LIBDIR = lib
-LOGDIR = /var/tmp/txnlib-logs
+LOGDIR = /var/tmp/txnlib
 OUTDIR = out
 TESTDIR = tests
 BENCHMARKFLAGS =
