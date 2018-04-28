@@ -426,22 +426,24 @@ struct file_desc *get_vfd(int fd)
 
 // ========== redo log methods ==========
 
-struct path *to_fsync = NULL;
+struct path *to_fsync[VFILES_CAPACITY];
 
 // only adds if unique
 void fsync_later(const char *path)
 {
-	struct path *tf = to_fsync;
+	unsigned long hashcode = hash(path);
+	struct path *tf = to_fsync[hashcode];
 	while (tf) {
 		if (strcmp(path, tf->name) == 0)
 			return;
 		tf = tf->next;
 	}
 
+	// unique
 	tf = malloc(sizeof(struct path));
 	snprintf(tf->name, sizeof(tf->name), "%s", path);
-	tf->next = to_fsync;
-	to_fsync = tf;
+	tf->next = to_fsync[hashcode];
+	to_fsync[hashcode] = tf;
 }
 
 int is_dir(const char *path)
@@ -453,15 +455,18 @@ int is_dir(const char *path)
 
 void fsync_now()
 {
-	while (to_fsync) {
-		struct path *tf = to_fsync;
-		to_fsync = to_fsync->next;
+	for (int i = 0; i < sizeof(to_fsync) / sizeof(to_fsync[0]); i++) {
+		struct path *tf = to_fsync[i];
+		while (tf) {
+			int fd = glibc_open(tf->name, (is_dir(tf->name)) ? O_DIRECTORY : O_WRONLY);
+			fsync(fd);
+			glibc_close(fd);
 
-		int fd = glibc_open(tf->name, (is_dir(tf->name)) ? O_DIRECTORY : O_WRONLY);
-		fsync(fd);
-		glibc_close(fd);
-
-		free(tf);
+			struct path *free_me = tf;
+			tf = tf->next;
+			free(free_me);
+		}
+		to_fsync[i] = NULL;
 	}
 }
 
@@ -528,6 +533,10 @@ int redo_truncate(char *path, off_t length)
 // returns nonzero if failed
 int replay_log()
 {
+	// initialize to_fsync
+	for (int i = 0; i < sizeof(to_fsync) / sizeof(to_fsync[0]); i++)
+		to_fsync[i] = NULL;
+
 	FILE *fp = fopen(redo_log, "r");
 	char entry[8500]; // two ext4 max paths + a lil more
 	while(fgets(entry, sizeof(entry), fp)) {
