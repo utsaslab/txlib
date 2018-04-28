@@ -600,6 +600,11 @@ int persist_all_data()
 		}
 	}
 
+	// close fd_map rd_fd
+	for (int i = 0; i < FD_MAX; i++)
+		if (fd_map[i])
+			glibc_close(fd_map[i]->rd_fd);
+
 	// also need to persist log directory
 	int ld = glibc_open(log_dir, O_DIRECTORY);
 	fsync(ld);

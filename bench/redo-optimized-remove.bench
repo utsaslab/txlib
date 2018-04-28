@@ -1,0 +1,14 @@
+  +++++++++++++++++++++++++++
+  +  BENCHMARKING remove()  +
+  +++++++++++++++++++++++++++
+ - count: 10000
+ - txn: within, without
+ - type: file, directory
+============================================
+- > txnless:
+- - > file:  0s      8064ns
+- - > dir:   0s     12174ns
+- > txnl:
+- - > file:  0s     47265ns (overhead:    5.86x)
+- - > dir:   0s     68228ns (overhead:    5.60x)
+============================================
