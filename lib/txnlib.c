@@ -426,6 +426,7 @@ struct file_desc *get_vfd(int fd)
 
 // ========== redo log methods ==========
 
+struct path_fd *fd_cache[VFILES_CAPACITY];
 struct path *to_fsync[VFILES_CAPACITY];
 
 // only adds if unique
@@ -470,6 +471,50 @@ void fsync_now()
 	}
 }
 
+void clear_fd_cache()
+{
+	for (int i = 0; i < sizeof(fd_cache) / sizeof(fd_cache[0]); i++) {
+		struct path_fd *pf = fd_cache[i];
+		while (pf) {
+			struct path_fd *free_me = pf;
+			pf = pf->next;
+			glibc_close(free_me->fd);
+			free(free_me);
+		}
+		fd_cache[i] = NULL;
+	}
+}
+
+int retrieve_fd(const char *path)
+{
+	unsigned long hashcode = hash(path);
+	struct path_fd *pf = fd_cache[hashcode];
+	while (pf) {
+		if (strcmp(path, pf->path) == 0)
+			return pf->fd;
+		pf = pf->next;
+	}
+
+	// fd not cached, cache it
+	int fd = glibc_open(path, O_RDWR);
+	if (fd == -1) {
+		if (errno == ENFILE) {
+			clear_fd_cache();
+			fd = glibc_open(path, O_RDWR);
+		} else {
+			printf("Failed to open (%s) for redo: %s\n", path, strerror(errno));
+		}
+	}
+
+	pf = malloc(sizeof(struct path_fd));
+	snprintf(pf->path, sizeof(pf->path), "%s", path);
+	pf->fd = fd;
+	pf->next = fd_cache[hashcode];
+	fd_cache[hashcode] = pf;
+
+	return fd;
+}
+
 int redo_mkdir(char *path, mode_t mode)
 {
 	int ret = glibc_mkdir(path, mode);
@@ -489,15 +534,13 @@ int redo_create(char *path, mode_t mode)
 int redo_write(char *path, off_t pos, off_t length, const char *datapath)
 {
 	char buf[length];
-	int rd = glibc_open(datapath, O_RDWR);
+	int rd = retrieve_fd(datapath);
 	glibc_lseek(rd, pos, SEEK_SET);
 	glibc_read(rd, buf, length);
-	glibc_close(rd);
 
-	int fd = glibc_open(path, O_RDWR);
+	int fd = retrieve_fd(path);
 	glibc_lseek(fd, pos, SEEK_SET);
 	ssize_t written = glibc_write(fd, buf, length);
-	glibc_close(fd);
 
 	fsync_later(path);
 
@@ -521,7 +564,7 @@ int redo_rename(char *src, char *dest)
 
 int redo_truncate(char *path, off_t length)
 {
-	int fd = glibc_open(path, O_RDWR);
+	int fd = retrieve_fd(path);
 	int ret = glibc_ftruncate(fd, length);
 	glibc_close(fd);
 
@@ -533,9 +576,11 @@ int redo_truncate(char *path, off_t length)
 // returns nonzero if failed
 int replay_log()
 {
-	// initialize to_fsync
+	// initialize sets
 	for (int i = 0; i < sizeof(to_fsync) / sizeof(to_fsync[0]); i++)
 		to_fsync[i] = NULL;
+	for (int i = 0; i < sizeof(fd_cache) / sizeof(fd_cache[0]); i++)
+		fd_cache[i] = NULL;
 
 	FILE *fp = fopen(redo_log, "r");
 	char entry[8500]; // two ext4 max paths + a lil more
@@ -573,6 +618,7 @@ int replay_log()
 	fclose(fp);
 
 	fsync_now();
+	clear_fd_cache();
 
 	return 0;
 }

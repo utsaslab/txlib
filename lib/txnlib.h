@@ -36,6 +36,12 @@ struct range {
 	struct range *next;
 };
 
+struct path_fd {
+	char path[4096+1];
+	int fd;
+	struct path_fd *next;
+};
+
 struct path {
 	char name[4096+1];
 	struct path *next;
