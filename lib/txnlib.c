@@ -577,9 +577,6 @@ int redo_truncate(char *path, off_t length)
 // returns nonzero if failed
 int replay_log()
 {
-	struct timeval a, b, c, d;
-	gettimeofday(&a, NULL);
-
 	// initialize sets
 	for (int i = 0; i < sizeof(to_fsync) / sizeof(to_fsync[0]); i++)
 		to_fsync[i] = NULL;
