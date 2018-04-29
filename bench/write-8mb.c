@@ -66,7 +66,7 @@ int main()
                 reals[i] = malloc(9);
                 snprintf(reals[i], 9, "%7d\n", i);
         }
-        int fd = open("out/write-8mb.out", O_CREAT | O_TRUNC | O_RDWR);
+        int fd = open("out/write-8mb.out", O_CREAT | O_TRUNC | O_RDWR, 0644);
 
         gettimeofday(&start, NULL);
         int id = begin_txn();
