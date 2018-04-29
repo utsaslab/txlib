@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include "txnlib.h"
 
@@ -52,9 +53,13 @@ int main()
                 save_log(NULL);
                 end_txn(id);
 
-                // resets
+                // reset
                 set_bypass(1);
                 remove("out/big-writes.out");
+                close(fd1);
+                int dir = open("out", O_DIRECTORY);
+                fsync(dir);
+                close(dir);
                 set_bypass(0);
 
                 // time redo()

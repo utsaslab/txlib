@@ -17,7 +17,7 @@
 #include <errno.h>
 
 #define FD_MAX 1024
-#define VFILES_CAPACITY 6113 // some big prime
+#define VFILES_CAPACITY 1009 // prime pls
 
 static int (*glibc_open)(const char *pathname, int flags, ...);
 static int (*glibc_close)(int fd);
@@ -304,14 +304,15 @@ int committed()
 		return 0;
 
 	char last[8];
+	memset(last, 0, sizeof(last));
 	int log = glibc_open(redo_log, O_RDONLY);
 	glibc_lseek(log, -7, SEEK_END);
-	glibc_read(log, last, 7);
+	ssize_t red = glibc_read(log, last, 7);
 	last[7] = '\0';
 
 	glibc_close(log);
 
-	return strcmp(last, "commit\n") == 0;
+	return (strcmp(last, "commit\n") == 0) && red;
 }
 
 // ========== fd_map + vfiles ==========
@@ -426,8 +427,8 @@ struct file_desc *get_vfd(int fd)
 
 // ========== redo log methods ==========
 
-struct path_fd *fd_cache[VFILES_CAPACITY];
-struct path *to_fsync[VFILES_CAPACITY];
+static struct path_fd *fd_cache[VFILES_CAPACITY];
+static struct path *to_fsync[VFILES_CAPACITY];
 
 // only adds if unique
 void fsync_later(const char *path)
@@ -576,6 +577,9 @@ int redo_truncate(char *path, off_t length)
 // returns nonzero if failed
 int replay_log()
 {
+	struct timeval a, b, c, d;
+	gettimeofday(&a, NULL);
+
 	// initialize sets
 	for (int i = 0; i < sizeof(to_fsync) / sizeof(to_fsync[0]); i++)
 		to_fsync[i] = NULL;
@@ -599,7 +603,9 @@ int replay_log()
 			off_t pos = atoi(nexttok(NULL));
 			off_t length = atoi(nexttok(NULL));
 			char *datapath = strtok(nexttok(NULL), "\n");
-			redo_write(path, pos, length, datapath);
+			int err = redo_write(path, pos, length, datapath);
+			if (err)
+                                printf("redo_write() failed: %d\n", err);
 		} else if (strcmp(op, "remove") == 0) {
 			char *path = strtok(nexttok(NULL), "\n");
 			redo_remove(path);
@@ -613,6 +619,9 @@ int replay_log()
 			redo_truncate(path, length);
 		} else if (strcmp(op, "commit") == 0) {
 			break;
+		} else {
+			printf("Error: encountered unexpected log operation: %s\n", op);
+			exit(1);
 		}
 	}
 	fclose(fp);
@@ -733,10 +742,10 @@ int end_txn(int txn_id)
 int redo()
 {
 	if (!committed())
-		return 0;
+		return -1;
 
 	if (access(bypass, F_OK) == 0)
-		return 0;
+		return -2;
 
 	int ret = replay_log();
 	if (keep_log) {
