@@ -461,7 +461,9 @@ void fsync_now()
 		struct path *tf = to_fsync[i];
 		while (tf) {
 			int fd = glibc_open(tf->name, (is_dir(tf->name)) ? O_DIRECTORY : O_WRONLY);
-			fsync(fd);
+			int err = fsync(fd);
+			if (err)
+				printf("Failed to fsync() %d: %s\n", fd, strerror(errno));
 			glibc_close(fd);
 
 			struct path *free_me = tf;
@@ -479,7 +481,9 @@ void clear_fd_cache()
 		while (pf) {
 			struct path_fd *free_me = pf;
 			pf = pf->next;
-			glibc_close(free_me->fd);
+			int err = glibc_close(free_me->fd);
+			if (err)
+				printf("Failed to close fd #%d: %s\n", free_me->fd, strerror(errno));
 			free(free_me);
 		}
 		fd_cache[i] = NULL;
@@ -536,12 +540,16 @@ int redo_write(char *path, off_t pos, off_t length, const char *datapath)
 {
 	char buf[length];
 	int rd = retrieve_fd(datapath);
+	// int rd = glibc_open(datapath, O_RDWR);
 	glibc_lseek(rd, pos, SEEK_SET);
 	glibc_read(rd, buf, length);
+	// glibc_close(rd);
 
 	int fd = retrieve_fd(path);
+	// int fd = glibc_open(path, O_RDWR);
 	glibc_lseek(fd, pos, SEEK_SET);
 	ssize_t written = glibc_write(fd, buf, length);
+	// glibc_close(fd);
 
 	fsync_later(path);
 
@@ -566,8 +574,9 @@ int redo_rename(char *src, char *dest)
 int redo_truncate(char *path, off_t length)
 {
 	int fd = retrieve_fd(path);
+	// int fd = glibc_open(path, O_RDWR);
 	int ret = glibc_ftruncate(fd, length);
-	glibc_close(fd);
+	// glibc_close(fd);
 
 	fsync_later(path);
 
@@ -613,7 +622,9 @@ int replay_log()
 		} else if (strcmp(op, "truncate") == 0) {
 			char *path = nexttok(NULL);
 			off_t length = atoi(nexttok(NULL));
-			redo_truncate(path, length);
+			int err = redo_truncate(path, length);
+			if (err)
+				printf("redo_truncate() failed: %d\n", err);
 		} else if (strcmp(op, "commit") == 0) {
 			break;
 		} else {
