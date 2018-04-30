@@ -43,6 +43,9 @@ unsigned long multiremove(int count, int txn, int file)
                 else
                         mkdir(path, 0755);
         }
+	int dir = open("out/remove", O_DIRECTORY);
+	fsync(dir);
+	close(dir);
 
         struct timeval start, finish;
         {

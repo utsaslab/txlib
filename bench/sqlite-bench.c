@@ -64,7 +64,7 @@ int main()
         char *reals[NUM_WRITES / 2];
         for (int i = 0; i < sizeof(reals) / sizeof(reals[0]); i++) {
                 reals[i] = malloc(9);
-                snprintf(reals[i], 9, "%7d\n", i);
+                snprintf(reals[i], 8, "%07d\n", i);
         }
         int fd = open("out/write-8mb.out", O_CREAT | O_TRUNC | O_RDWR, 0644);
 

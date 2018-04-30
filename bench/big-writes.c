@@ -53,8 +53,10 @@ int main()
                 save_log(NULL);
                 end_txn(id);
 
-                // reset
+                // reset for redo()
                 set_bypass(1);
+		ftruncate(fd1, 0); // to be safe
+		fsync(fd1);
                 remove("out/big-writes.out");
                 close(fd1);
                 int dir = open("out", O_DIRECTORY);
