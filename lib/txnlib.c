@@ -611,7 +611,7 @@ int replay_log()
 			char *datapath = strtok(nexttok(NULL), "\n");
 			int err = redo_write(path, pos, length, datapath);
 			if (err)
-                                printf("redo_write() failed: %d\n", err);
+				printf("redo_write() failed: %d\n", err);
 		} else if (strcmp(op, "remove") == 0) {
 			char *path = strtok(nexttok(NULL), "\n");
 			redo_remove(path);
