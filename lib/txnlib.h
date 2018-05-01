@@ -11,7 +11,7 @@ struct txn {
 };
 
 struct file_desc {
-	int rd_fd;
+	off_t pos;
 	struct vfile *file;
 };
 
@@ -20,12 +20,8 @@ struct vfile {
 	char src[4096+1]; // for reading
 	char redirect[4096+1]; // size of redirect should change with transaction
 	struct range *writes;
-};
 
-struct vfile_ptr {
-	struct vfile *vf;
-	struct vfile_ptr *prev;
-	struct vfile_ptr *next;
+	struct vfile *next;
 };
 
 struct range {
@@ -34,12 +30,6 @@ struct range {
 
 	struct range *prev;
 	struct range *next;
-};
-
-struct path_fd {
-	char path[4096+1];
-	int fd;
-	struct path_fd *next;
 };
 
 struct path {
