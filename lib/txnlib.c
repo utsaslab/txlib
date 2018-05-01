@@ -360,6 +360,13 @@ void fsync_now()
 
 void fsync_later(const char *path)
 {
+	struct path *tf = to_fsync;
+	while (tf) {
+		if (strcmp(tf->name, path) == 0)
+			return;
+		tf = tf->next;
+	}
+
 	struct path *p = malloc(sizeof(struct path));
 	snprintf(p->name, sizeof(p->name), "%s", path);
 	p->next = to_fsync;
