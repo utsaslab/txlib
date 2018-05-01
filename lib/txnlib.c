@@ -371,7 +371,7 @@ void merge_range(struct vfile *vf, off_t begin, off_t end)
 int next_fd()
 {
 	for (int i = 3; i < FD_MAX; i++) // skip 0, 1, 2
-		if (!fd_map[i] && !fcntl(i, F_GETFD)) // also check it is not a valid open fd
+		if (!fd_map[i] && (fstat(i, NULL) && errno == EBADF)) // also check it is not a valid open fd
 			return i;
 	return -1;
 }
@@ -461,9 +461,7 @@ void fsync_now()
 		struct path *tf = to_fsync[i];
 		while (tf) {
 			int fd = glibc_open(tf->name, (is_dir(tf->name)) ? O_DIRECTORY : O_WRONLY);
-			int err = fsync(fd);
-			if (err)
-				printf("Failed to fsync() %d: %s\n", fd, strerror(errno));
+			fsync(fd);
 			glibc_close(fd);
 
 			struct path *free_me = tf;
