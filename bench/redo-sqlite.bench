@@ -1,4 +1,0 @@
-count: 1048576
-sqlite transaction:  2s 559477000ns
-txnlib transaction:  6s 257144000ns
-txnlib is 2.44x slower than sqlite
