@@ -1,0 +1,33 @@
+  ++++++++++++++++++++++++++
+  +  BENCHMARKING write()  +
+  ++++++++++++++++++++++++++
+ - count: 10000
+ - fs ops: memory, fsync, txn
+ - file: append, overwrite
+ - length: single -> 1, short -> 10, long -> 100
+============================================
+> in memory...
+- > append...
+- - > single:  0s      6031ns
+- - > short:   0s     26278ns
+- - > long:    0s    267879ns
+- > overwrite...
+- - > single:  0s      3398ns
+- - > short:   0s     24607ns
+- - > long:    0s    236343ns
+> ending fsync()...
+- > append...
+- - > single:  0s   4431155ns
+- - > short:   0s   4282631ns
+- - > long:    0s   5946016ns
+- > overwrite...
+- - > single:  0s   4742782ns
+- - > short:   0s   4823501ns
+- - > long:    0s   5407063ns
+> transactional...
+- > append...
+- - > single:  0s  23009112ns (overhead: mem -> 3815.14x, fsync ->    5.19x)
+- - > short:   0s  31921843ns (overhead: mem -> 1214.77x, fsync ->    7.45x)
+- - > long:    0s  38673564ns (overhead: mem ->  144.37x, fsync ->    6.50x)
+- > overwrite...
+- - > single: 

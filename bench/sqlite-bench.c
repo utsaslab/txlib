@@ -10,6 +10,7 @@
 #include "txnlib.h"
 
 #define NUM_WRITES 1024 * 1024
+#define WRITE_SIZE 16
 
 // nanoseconds
 unsigned long time_passed(struct timeval start, struct timeval finish)
@@ -63,16 +64,16 @@ int main()
 	// txnlib
 	char *reals[NUM_WRITES / 2];
 	for (int i = 0; i < sizeof(reals) / sizeof(reals[0]); i++) {
-		reals[i] = malloc(9);
-		snprintf(reals[i], 8, "%07d\n", i);
+		reals[i] = malloc(WRITE_SIZE+1);
+		snprintf(reals[i], WRITE_SIZE, "%07d\n", i);
 	}
 	int fd = open("out/write-8mb.out", O_CREAT | O_TRUNC | O_RDWR, 0644);
 
 	gettimeofday(&start, NULL);
 	int id = begin_txn();
 	for (int i = 0; i < sizeof(reals) / sizeof(reals[0]) / 2; i++) {
-		write(fd, reals[i], 8);
-		write(fd, reals[i], 8);
+		write(fd, reals[i], WRITE_SIZE);
+		// write(fd, reals[i], 8);
 	}
 	end_txn(id);
 	gettimeofday(&finish, NULL);
