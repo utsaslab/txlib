@@ -371,7 +371,7 @@ void merge_range(struct vfile *vf, off_t begin, off_t end)
 int next_fd()
 {
 	for (int i = 3; i < FD_MAX; i++) // skip 0, 1, 2
-		if (!fd_map[i] && (fstat(i, NULL) && errno == EBADF)) // also check it is not a valid open fd
+		if (!fd_map[i] && (glibc_fstat(i, NULL) && errno == EBADF)) // also check it is not a valid open fd
 			return i;
 	return -1;
 }
