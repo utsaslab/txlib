@@ -29,6 +29,17 @@ unsigned long time_passed(struct timeval start, struct timeval finish)
 	return passed;
 }
 
+void clear_env()
+{
+	int fd = open("/proc/sys/vm/drop_caches", O_WRONLY);
+	if (fd == -1)
+		printf("Cannot open() to drop caches: %s\n", strerror(errno));
+
+	sync();
+	write(fd, "3", 1);
+	close(fd);
+}
+
 unsigned long multiremove(int count, int txn, int file)
 {
 	mkdir("out/remove", 0755);
@@ -47,6 +58,7 @@ unsigned long multiremove(int count, int txn, int file)
 	fsync(dir);
 	close(dir);
 
+	clear_env();
 	struct timeval start, finish;
 	{
 		gettimeofday(&start, NULL);
@@ -61,7 +73,9 @@ unsigned long multiremove(int count, int txn, int file)
 			end_txn(txn_id);
 		} else {
 			int dir = open("out/remove", O_DIRECTORY);
-			fsync(dir);
+			int err = fsync(dir);
+			if (err)
+				printf("Failed to fsync() directory.\n");
 			close(dir);
 		}
 
@@ -82,7 +96,7 @@ void removebench()
 	 *  - within/without txn
 	 *  - file/directory
 	 */
-	int count = 10000;
+	int count = 20000;
 
 	printf("  +++++++++++++++++++++++++++\n");
 	printf("  +  BENCHMARKING remove()  +\n");
@@ -149,6 +163,8 @@ unsigned long multiwrite(int buf_size, int count, int durability, int overwrite,
 		char buf[buf_size];
 		memset(buf, i+'0', buf_size);
 
+		clear_env();
+
 		int fd = open(working_file, O_CREAT | O_RDWR, 0644);
 		{
 			gettimeofday(&start, NULL);
@@ -196,13 +212,14 @@ void writebench()
 	 */
 
 	int shrt = 10, lng = 100;
-	int buf_size = 128;
-	int count = 10000;
+	int buf_size = 8192;
+	int count = 1000;
 
 	printf("  ++++++++++++++++++++++++++\n");
 	printf("  +  BENCHMARKING write()  +\n");
 	printf("  ++++++++++++++++++++++++++\n");
 	printf(" - count: %d\n", count);
+	printf(" - write size: %d\n", buf_size);
 	printf(" - fs ops: memory, fsync, txn\n");
 	printf(" - file: append, overwrite\n");
 	printf(" - length: single -> %d, short -> %d, long -> %d\n", 1, shrt, lng);
@@ -313,9 +330,10 @@ unsigned long multiswap(int buf_size, int count, int txn, unsigned long filesize
 	unsigned long runtime = 0;
 
 	for (int i = 0; i < count; i++) {
+		clear_env();
 		struct timeval start, finish;
-
 		gettimeofday(&start, NULL);
+
 		int fd = -1, txn_id = -1;
 		if (txn) {
 			fd = open(working_file, O_RDWR); // TODO: issue with close(fd) after end_txn()
@@ -349,7 +367,7 @@ unsigned long multiswap(int buf_size, int count, int txn, unsigned long filesize
 void swapbench()
 {
 	// compare to copy-write-then-rename method
-	int count = 50;
+	int count = 100;
 	int max_buf_size = 4 * KB;
 	int range = 25; // max 2^30 filesize (start at 6)
 	unsigned long filesizes[range];
@@ -397,7 +415,7 @@ int main()
 	 * 1 -> write
 	 * 2 -> swap
 	 */
-	int op = 1;
+	int op = 2;
 
 	if (op == 0)
 		removebench();

@@ -1,7 +1,9 @@
+#include <errno.h>
 #include <fcntl.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -18,6 +20,14 @@ unsigned long time_passed(struct timeval start, struct timeval finish)
 	passed += 1000000000 * (finish.tv_sec - start.tv_sec);
 	passed += 1000 * (finish.tv_usec - start.tv_usec);
 	return passed;
+}
+
+void clear_env()
+{
+	int fd = open("/proc/sys/vm/drop_caches", O_WRONLY);
+	sync();
+	write(fd, "3", 1);
+	close(fd);
 }
 
 int main()
@@ -62,6 +72,7 @@ int main()
 		int dir = open("out", O_DIRECTORY);
 		fsync(dir);
 		close(dir);
+		clear_env();
 		set_bypass(0);
 
 		// time redo()
