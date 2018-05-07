@@ -505,7 +505,8 @@ int retrieve_fd(const char *path)
 			clear_fd_cache();
 			fd = glibc_open(path, O_RDWR);
 		} else {
-			printf("Failed to open (%s) for redo: %s\n", path, strerror(errno));
+			// printf("Failed to open (%s) for redo: %s\n", path, strerror(errno));
+			return -1;
 		}
 	}
 
@@ -607,9 +608,7 @@ int replay_log()
 			off_t pos = atoi(nexttok(NULL));
 			off_t length = atoi(nexttok(NULL));
 			char *datapath = strtok(nexttok(NULL), "\n");
-			int err = redo_write(path, pos, length, datapath);
-			if (err)
-				printf("redo_write() failed: %d\n", err);
+			redo_write(path, pos, length, datapath);
 		} else if (strcmp(op, "remove") == 0) {
 			char *path = strtok(nexttok(NULL), "\n");
 			redo_remove(path);
@@ -620,9 +619,7 @@ int replay_log()
 		} else if (strcmp(op, "truncate") == 0) {
 			char *path = nexttok(NULL);
 			off_t length = atoi(nexttok(NULL));
-			int err = redo_truncate(path, length);
-			if (err)
-				printf("redo_truncate() failed: %d\n", err);
+			redo_truncate(path, length);
 		} else if (strcmp(op, "commit") == 0) {
 			break;
 		} else {
@@ -674,6 +671,7 @@ int persist_all_data()
 	// commit entry indicates log is complete
 	fsync(log_fd);
 	write_to_log("commit\n"); // do not need to call fsync() after, it's there or it isn't
+	fsync(log_fd);
 	glibc_close(log_fd);
 	log_fd = -1;
 
